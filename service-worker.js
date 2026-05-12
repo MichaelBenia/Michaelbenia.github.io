@@ -1,9 +1,10 @@
-const CACHE_NAME = "wine-order-count-static-v3";
+const CACHE_NAME = "wine-order-count-static-v4";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./catalog.js",
+  "./firebase-config.js",
   "./app.js",
   "./xlsx.full.min.js",
 ];

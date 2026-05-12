@@ -61,7 +61,7 @@ let state = loadState(currentStoreNumber);
 let saveTimer = null;
 let firebaseSaveTimer = null;
 let editingProductId = null;
-let syncStatus = "Saved locally";
+let syncStatus = "Local only";
 let isSwitchingStore = false;
 
 bindEvents();
@@ -257,15 +257,19 @@ function loadState(storeNumber = currentStoreNumber || DEFAULT_STORE_NUMBER) {
   }
 }
 
-function saveState({ showConfirmation = false } = {}) {
+function saveLocalBackup() {
   state.lastSaved = new Date().toISOString();
   state.storeNumber = currentStoreNumber;
   localStorage.setItem(storageKeyForStore(currentStoreNumber), JSON.stringify(state));
   saveStoreRegistry();
   renderLastSaved();
-  setSyncStatus("Saved locally");
+}
+
+function saveState({ showConfirmation = false } = {}) {
+  saveLocalBackup();
+  setSyncStatus("Local only");
   scheduleFirebaseSave();
-  if (showConfirmation) showToast("Progress saved locally. Firebase sync queued.");
+  if (showConfirmation) showToast("Firebase save queued.");
 }
 
 function scheduleSave() {
@@ -276,26 +280,64 @@ function scheduleSave() {
 function scheduleFirebaseSave() {
   clearTimeout(firebaseSaveTimer);
   if (isSwitchingStore) return;
-  firebaseSaveTimer = setTimeout(() => syncCurrentStoreToFirebase(), FIREBASE_SAVE_DEBOUNCE_MS);
+  firebaseSaveTimer = setTimeout(() => syncCurrentStoreToFirebase({ silent: true }), FIREBASE_SAVE_DEBOUNCE_MS);
 }
 
-async function syncCurrentStoreToFirebase() {
-  if (!window.WineFirebaseSync?.saveStoreState) {
-    setSyncStatus("Saved locally");
-    return;
+async function syncCurrentStoreToFirebase({ throwOnError = false, silent = false } = {}) {
+  const storeNumber = selectedFirebaseStoreNumber();
+  if (!storeNumber) {
+    setSyncStatus("Local only");
+    if (!silent) showToast("Select or add a store number before saving to Firebase.");
+    return false;
   }
-  const storeNumber = currentStoreNumber;
+  if (!window.WineFirebaseSync?.saveStoreState) {
+    setSyncStatus("Local only");
+    return false;
+  }
   try {
-    setSyncStatus("Syncing");
+    setSyncStatus("Saving to Firebase…");
     await window.WineFirebaseSync.saveStoreState(storeNumber, serializeStateForFirestore());
     if (storeNumber === currentStoreNumber) setSyncStatus("Synced to Firebase");
+    return true;
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
-      setSyncStatus("Firebase error");
+      setSyncStatus("Firebase save failed");
       setStatus("Offline/local mode: changes are saved on this device and will sync when Firebase is available.");
     }
-    console.warn("Firebase sync failed", error);
+    console.error("Firebase save failed", error);
+    if (throwOnError) throw error;
+    return false;
   }
+}
+
+async function saveProjectNow() {
+  clearTimeout(saveTimer);
+  clearTimeout(firebaseSaveTimer);
+  if (!selectedFirebaseStoreNumber()) {
+    saveLocalBackup();
+    setSyncStatus("Local only");
+    showToast("Select or add a store number before saving to Firebase.");
+    return;
+  }
+  saveLocalBackup();
+  if (!window.WineFirebaseSync?.saveStoreState) {
+    setSyncStatus("Local only");
+    showToast("Firebase is not available. Project saved locally only.");
+    return;
+  }
+  try {
+    await syncCurrentStoreToFirebase({ throwOnError: true });
+    showToast("Project saved to Firebase");
+    setStatus(`Project saved to Firebase for Store ${currentStoreNumber}.`);
+  } catch (error) {
+    showToast("Firebase save failed. Project saved locally only.");
+    setStatus("Firebase save failed. Project saved locally only.", true);
+  }
+}
+
+function selectedFirebaseStoreNumber() {
+  const storeNumber = cleanText(currentStoreNumber);
+  return storeNumber && storeNumber !== DEFAULT_STORE_NUMBER ? storeNumber : "";
 }
 
 function serializeStateForFirestore() {
@@ -309,8 +351,10 @@ function serializeStateForFirestore() {
     backStock: Object.fromEntries(products.map(product => [product.id, product.backstock || 0])),
     saleFlags: Object.fromEntries(products.map(product => [product.id, product.onSale === true])),
     salesData: cleanState.sales?.sessions || [],
+    inventoryData: cleanState.inventory || { products: [] },
     importedSalesFileData: cleanState.sales || { sessions: [], activeSessionId: null },
     inventoryFileData: cleanState.inventory || { products: [] },
+    productOverrides: cleanState.productOverrides || {},
     productEdits: cleanState.productOverrides || {},
     orderRecommendations: cleanState.processing?.recommendations || [],
     settings: cleanState.settings || {},
@@ -340,7 +384,13 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
     lastSaved: remoteState.clientLastSaved || remoteState.lastSaved || null,
   };
   base.inventory = {
-    products: mergeProductsWithCatalog(remoteState.inventory?.products || remoteState.inventoryFileData?.products || [], base),
+    products: mergeProductsWithCatalog(
+      remoteState.inventory?.products
+        || remoteState.inventoryData?.products
+        || remoteState.inventoryFileData?.products
+        || [],
+      base,
+    ),
   };
   return base;
 }
@@ -352,7 +402,7 @@ function bindEvents() {
   dom.uploadInventoryButton.addEventListener("click", () => dom.inventoryInput.click());
   dom.salesInput.addEventListener("change", event => handleSalesFile(event.target.files?.[0]));
   dom.inventoryInput.addEventListener("change", event => handleInventoryFile(event.target.files?.[0]));
-  dom.saveProgressButton.addEventListener("click", () => saveState({ showConfirmation: true }));
+  dom.saveProgressButton.addEventListener("click", saveProjectNow);
   dom.exportInventoryButton.addEventListener("click", exportInventoryCsv);
   dom.exportOrdersButton.addEventListener("click", exportOrdersCsv);
   dom.settingsButton.addEventListener("click", () => activateTab("settings"));
@@ -367,7 +417,7 @@ function bindEvents() {
   dom.targetWeeksInput.addEventListener("change", () => {
     state.settings.targetWeeks = Math.max(0.5, Number(dom.targetWeeksInput.value) || DEFAULT_TARGET_WEEKS);
     recalculateRecommendations();
-    saveState({ showConfirmation: true });
+    saveState();
   });
   dom.saleOnlyToggle.addEventListener("change", () => {
     state.settings.showSaleOnly = dom.saleOnlyToggle.checked;
@@ -387,7 +437,7 @@ function bindEvents() {
     syncCurrentStoreToFirebase();
   });
   window.addEventListener("offline", () => {
-    setSyncStatus("Saved locally");
+    setSyncStatus("Local only");
     setStatus("Offline/local mode: changes are saved on this device and will sync when Firebase is available.");
   });
 }
@@ -395,15 +445,18 @@ function bindEvents() {
 async function initializeFirebaseSync() {
   renderStoreSelector();
   if (!window.WineFirebaseSync?.ready) {
-    setSyncStatus("Saved locally");
+    setSyncStatus("Local only");
+    return;
+  }
+  if (!selectedFirebaseStoreNumber()) {
+    setSyncStatus("Local only");
     return;
   }
   try {
-    setSyncStatus("Syncing");
     await window.WineFirebaseSync.ready;
     await loadSelectedStoreFromFirebase();
   } catch (error) {
-    setSyncStatus("Firebase error");
+    setSyncStatus("Firebase save failed");
     setStatus("Offline/local mode: changes are saved on this device and will sync when Firebase is available.");
     console.warn("Firebase initialization failed", error);
   }
@@ -426,12 +479,12 @@ async function addStore() {
   editingProductId = null;
   render();
   try {
-    setSyncStatus("Syncing");
+    setSyncStatus("Saving to Firebase…");
     await window.WineFirebaseSync?.createStoreIfMissing?.(storeNumber);
     await loadSelectedStoreFromFirebase({ createIfMissing: true });
     showToast(`Store ${storeNumber} selected.`);
   } catch (error) {
-    setSyncStatus("Firebase error");
+    setSyncStatus("Firebase save failed");
     setStatus("Offline/local mode: changes are saved on this device and will sync when Firebase is available.");
     console.warn("Add store Firebase setup failed", error);
   }
@@ -455,13 +508,16 @@ async function switchStore(storeNumber) {
 }
 
 async function loadSelectedStoreFromFirebase({ createIfMissing = false } = {}) {
-  if (!window.WineFirebaseSync?.getStoreState) {
-    setSyncStatus("Saved locally");
+  const storeNumber = selectedFirebaseStoreNumber();
+  if (!storeNumber) {
+    setSyncStatus("Local only");
     return;
   }
-  const storeNumber = currentStoreNumber;
+  if (!window.WineFirebaseSync?.getStoreState) {
+    setSyncStatus("Local only");
+    return;
+  }
   try {
-    setSyncStatus("Syncing");
     const remoteState = await window.WineFirebaseSync.getStoreState(storeNumber);
     if (storeNumber !== currentStoreNumber) return;
     if (remoteState) {
@@ -476,7 +532,7 @@ async function loadSelectedStoreFromFirebase({ createIfMissing = false } = {}) {
     await syncCurrentStoreToFirebase();
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
-      setSyncStatus("Firebase error");
+      setSyncStatus("Firebase save failed");
       setStatus("Offline/local mode: changes are saved on this device and will sync when Firebase is available.");
     }
     console.warn("Firebase store load failed", error);
@@ -1369,8 +1425,8 @@ function setSyncStatus(message) {
 
 function syncStatusClass(message) {
   if (message === "Synced to Firebase") return "synced";
-  if (message === "Syncing") return "syncing";
-  if (message === "Firebase error") return "error";
+  if (message === "Saving to Firebase…") return "syncing";
+  if (message === "Firebase save failed") return "error";
   return "local";
 }
 
