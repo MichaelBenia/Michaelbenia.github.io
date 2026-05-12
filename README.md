@@ -9,7 +9,9 @@ This folder contains a standalone HTML/CSS/JavaScript version of Wine Order Coun
 - `styles.css` - purple themed UI
 - `app.js` - local storage, XLSX/CSV import, ordering logic, CSV export
 - `service-worker.js` - basic offline cache
-- `vendor/xlsx.full.min.js` - local SheetJS build for browser XLSX parsing
+- `xlsx.full.min.js` - local SheetJS build for browser XLSX parsing
+
+`index.html` loads `xlsx.full.min.js` before `app.js`. If the local file is missing, it attempts a CDN fallback from jsDelivr. For restricted work laptops, keep `xlsx.full.min.js` beside `index.html` so XLSX uploads work without relying on the CDN.
 
 ## What Runs Locally
 

@@ -411,7 +411,9 @@ async function parseFileRows(file) {
     throw new Error("Invalid format. Upload an XLSX or CSV file.");
   }
   if (!window.XLSX) {
-    throw new Error("The XLSX parser did not load. Refresh the page and try again.");
+    throw new Error(
+      "XLSX support is not loaded. The app needs the SheetJS xlsx.full.min.js file to read Excel files. Make sure xlsx.full.min.js is included in the project and loaded before app.js.",
+    );
   }
   const bytes = await file.arrayBuffer();
   const workbook = XLSX.read(bytes, { type: "array", cellDates: true });

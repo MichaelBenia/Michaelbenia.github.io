@@ -1,11 +1,11 @@
-const CACHE_NAME = "wine-order-count-static-v2";
+const CACHE_NAME = "wine-order-count-static-v3";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./catalog.js",
   "./app.js",
-  "./vendor/xlsx.full.min.js",
+  "./xlsx.full.min.js",
 ];
 
 self.addEventListener("install", event => {
