@@ -40,7 +40,9 @@ const dom = {
   targetWeeksInput: document.getElementById("targetWeeksInput"),
   clearSalesButton: document.getElementById("clearSalesButton"),
   clearInventoryButton: document.getElementById("clearInventoryButton"),
+  clearSaleFlagsButton: document.getElementById("clearSaleFlagsButton"),
   clearAllButton: document.getElementById("clearAllButton"),
+  saleOnlyToggle: document.getElementById("saleOnlyToggle"),
   settingsExportInventoryButton: document.getElementById("settingsExportInventoryButton"),
   settingsExportOrdersButton: document.getElementById("settingsExportOrdersButton"),
 };
@@ -62,7 +64,7 @@ function defaultState() {
       deductions: [],
       recommendations: [],
     },
-    settings: { targetWeeks: DEFAULT_TARGET_WEEKS },
+    settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false },
     lastSaved: null,
   };
 }
@@ -156,6 +158,7 @@ function loadState() {
       },
       settings: {
         targetWeeks: Number(parsed.settings?.targetWeeks) || DEFAULT_TARGET_WEEKS,
+        showSaleOnly: parsed.settings?.showSaleOnly === true,
       },
       lastSaved: parsed.lastSaved || null,
     };
@@ -188,6 +191,7 @@ function bindEvents() {
   dom.applyDeductionButton.addEventListener("click", applySalesDeduction);
   dom.clearSalesButton.addEventListener("click", clearSalesData);
   dom.clearInventoryButton.addEventListener("click", clearInventoryCounts);
+  dom.clearSaleFlagsButton.addEventListener("click", clearAllSaleFlags);
   dom.clearAllButton.addEventListener("click", clearAllLocalData);
   dom.settingsExportInventoryButton.addEventListener("click", exportInventoryCsv);
   dom.settingsExportOrdersButton.addEventListener("click", exportOrdersCsv);
@@ -195,6 +199,11 @@ function bindEvents() {
     state.settings.targetWeeks = Math.max(0.5, Number(dom.targetWeeksInput.value) || DEFAULT_TARGET_WEEKS);
     recalculateRecommendations();
     saveState({ showConfirmation: true });
+  });
+  dom.saleOnlyToggle.addEventListener("change", () => {
+    state.settings.showSaleOnly = dom.saleOnlyToggle.checked;
+    render();
+    saveState();
   });
 
   document.querySelectorAll(".tab-button").forEach(button => {
@@ -458,6 +467,7 @@ function parseCsv(text) {
 function render() {
   renderLastSaved();
   dom.targetWeeksInput.value = state.settings.targetWeeks;
+  dom.saleOnlyToggle.checked = state.settings.showSaleOnly === true;
   renderInventorySummary();
   renderOrderingSummary();
   renderInventoryTable();
@@ -498,8 +508,11 @@ function renderOrderingSummary() {
 
 function renderInventoryTable() {
   const sortedProducts = sortProducts(state.inventory.products);
-  const visibleProducts = sortedProducts.filter(product => categoryByUpc.has(product.id));
-  const unknownProducts = sortedProducts.filter(product => !categoryByUpc.has(product.id));
+  const filteredProducts = state.settings.showSaleOnly
+    ? sortedProducts.filter(product => product.onSale)
+    : sortedProducts;
+  const visibleProducts = filteredProducts.filter(product => categoryByUpc.has(product.id));
+  const unknownProducts = filteredProducts.filter(product => !categoryByUpc.has(product.id));
 
   let html = `<table><thead><tr>
     <th>JDE/UPC</th><th>Description</th><th class="center-cell">Front</th>
@@ -510,26 +523,26 @@ function renderInventoryTable() {
     if (!products.length) continue;
     html += `<tr class="category-row"><td colspan="6">${escapeHtml(section.name)}</td></tr>`;
     for (const product of products) {
-      html += `<tr data-id="${escapeHtml(product.id)}">
+      html += `<tr class="${product.onSale ? "sale-item" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(product.id)}</td>
-        <td class="desc-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</td>
+        <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
         <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
         <td class="number-cell">${quantityControl(product.id, "backstock", product.backstock || 0)}</td>
         <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
-        <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} /></td>
+        <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
       </tr>`;
     }
   }
   if (unknownProducts.length) {
     html += `<tr class="category-row"><td colspan="6">Unmatched Products</td></tr>`;
     for (const product of unknownProducts) {
-      html += `<tr data-id="${escapeHtml(product.id)}">
+      html += `<tr class="${product.onSale ? "sale-item" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(product.id)}</td>
-        <td class="desc-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</td>
+        <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
         <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
         <td class="number-cell">${quantityControl(product.id, "backstock", product.backstock || 0)}</td>
         <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
-        <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} /></td>
+        <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
       </tr>`;
     }
   }
@@ -538,7 +551,9 @@ function renderInventoryTable() {
 }
 
 function renderOrderingTable() {
-  const recommendations = state.processing.recommendations || [];
+  const recommendations = state.settings.showSaleOnly
+    ? (state.processing.recommendations || []).filter(item => getProduct(item.id)?.onSale)
+    : state.processing.recommendations || [];
   if (!recommendations.length) {
     dom.orderingTable.innerHTML = `<div class="empty-state">Upload a sales file to calculate order recommendations from the built-in catalog.</div>`;
     dom.applyDeductionButton.disabled = true;
@@ -565,9 +580,10 @@ function renderOrderingTable() {
     html += `<tr class="category-row"><td colspan="10">${escapeHtml(section.name)}</td></tr>`;
     for (const item of rows) {
       const statusClass = item.status === "Order Needed" ? "status-order" : "status-ok";
-      html += `<tr data-id="${escapeHtml(item.id)}">
+      const onSale = getProduct(item.id)?.onSale === true;
+      html += `<tr class="${onSale ? "sale-item" : ""}" data-id="${escapeHtml(item.id)}" title="${onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(item.id)}</td>
-        <td class="desc-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</td>
+        <td class="desc-cell product-name-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}${onSale ? saleBadge({ onSale: true }) : ""}</td>
         <td class="number-cell">${formatNumber(item.unitsSold)}</td>
         <td class="number-cell">${formatNumber(item.totalUnitsOnHand)}</td>
         <td class="number-cell">${item.weeksOfProduct == null ? "N/A" : item.weeksOfProduct.toFixed(1)}</td>
@@ -584,7 +600,7 @@ function renderOrderingTable() {
 }
 
 function renderUnmatched() {
-  const unmatched = state.processing.unmatched || [];
+  const unmatched = state.settings.showSaleOnly ? [] : state.processing.unmatched || [];
   if (!unmatched.length) {
     dom.unmatchedList.innerHTML = `<div class="small-muted">No unmatched rows.</div>`;
     return;
@@ -708,6 +724,19 @@ function clearInventoryCounts() {
   showToast("Inventory count data cleared.");
 }
 
+function clearAllSaleFlags() {
+  if (!confirm("Clear all On Sale flags? Inventory counts and sales data will not be changed.")) return;
+  for (const product of state.inventory.products) {
+    product.onSale = false;
+    product.lastUpdated = new Date().toISOString();
+  }
+  state.settings.showSaleOnly = false;
+  recalculateRecommendations();
+  saveState();
+  setStatus("All sale flags cleared.");
+  showToast("Sale flags cleared.");
+}
+
 function clearAllLocalData() {
   if (!confirm("Clear all saved local data for this browser? This cannot be undone.")) return;
   localStorage.removeItem(STORAGE_KEY);
@@ -771,6 +800,10 @@ function quantityControl(id, field, value) {
     <input type="number" min="0" data-field="${field}" data-id="${escapeHtml(id)}" value="${Number(value || 0)}" />
     <button data-action="adjust" data-field="${field}" data-id="${escapeHtml(id)}" data-delta="1">+</button>
   </span>`;
+}
+
+function saleBadge(item) {
+  return item?.onSale ? ` <span class="sale-badge">ON SALE</span>` : "";
 }
 
 function sortProducts(products) {

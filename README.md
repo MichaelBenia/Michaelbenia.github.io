@@ -24,6 +24,7 @@ Saved locally:
 - Front unit counts
 - Backstock case counts
 - notes and order overrides
+- on-sale flags and the Show Only Sale Items filter
 - uploaded sales sessions
 - matched and unmatched sales rows
 - deduction history

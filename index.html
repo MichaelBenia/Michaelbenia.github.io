@@ -43,6 +43,10 @@
           Export Order List
         </button>
         <button id="settingsButton" class="ghost-button">Settings</button>
+        <label class="toolbar-toggle" title="Show only products currently marked as on sale.">
+          <input id="saleOnlyToggle" type="checkbox" />
+          Show Only Sale Items
+        </label>
       </section>
 
       <div id="statusBanner" class="status-banner" role="status">
@@ -101,6 +105,9 @@
               </button>
               <button id="clearInventoryButton" class="secondary-button danger">
                 Clear inventory count data
+              </button>
+              <button id="clearSaleFlagsButton" class="secondary-button danger">
+                Clear All Sale Flags
               </button>
               <button id="clearAllButton" class="secondary-button danger">
                 Clear all saved local data
