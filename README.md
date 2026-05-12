@@ -5,6 +5,7 @@ This folder contains a standalone HTML/CSS/JavaScript version of Wine Order Coun
 ## Files
 
 - `index.html` - app shell
+- `catalog.js` - built-in curated product catalog and fixed category/order mapping
 - `styles.css` - purple themed UI
 - `app.js` - local storage, XLSX/CSV import, ordering logic, CSV export
 - `service-worker.js` - basic offline cache
@@ -16,6 +17,7 @@ The app has no backend, no Firebase, no login, and no database. Uploaded files a
 
 Saved locally:
 
+- built-in catalog inventory counts and edits
 - inventory products
 - Front unit counts
 - Backstock case counts
@@ -60,6 +62,8 @@ http://localhost:8080
 ```
 
 ## Import Expectations
+
+The app includes the curated product catalog automatically. Inventory file import is optional and is used to merge count data into matching catalog products.
 
 Inventory files should include headers like:
 

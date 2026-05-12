@@ -1,79 +1,12 @@
 const STORAGE_KEY = "wine-order-count-static-v1";
 const DEFAULT_TARGET_WEEKS = 2;
 
-const CATEGORY_CONFIG = [
-  {
-    name: "Premium",
-    upcs: [
-      "80098877", "80098876", "80098878", "80094413", "80094414",
-      "80096856", "80096855", "80096857", "317016", "988103", "261099",
-      "80003853", "80020465", "80060055", "80059448", "219543", "586388",
-      "988129", "981415", "981332", "981233", "988130", "988102",
-      "80023908", "988055", "80011977", "80097811", "560680", "526228",
-      "988319", "618421", "988320", "618413", "80018559", "80095405",
-      "80095404", "80095406", "80099905", "80087078", "80087080",
-      "80095212", "80095211", "80087082", "80087068", "80087069",
-      "80087079", "80087083", "80094698", "80087085", "80087102",
-      "80098996", "80060253", "80084428", "80092411", "80059250",
-      "80060252",
-    ],
-  },
-  {
-    name: "Core",
-    upcs: [
-      "80091176", "80095812", "80091174", "80085897", "80085895",
-      "80065018", "80023337", "80062732", "80099122", "80099121",
-      "80023604", "80015842", "988285", "80055726", "331025", "328534",
-      "80083707", "328526", "80014111", "377820", "383711", "80098063",
-      "80098065", "987503", "989921", "80083815", "80083978", "399428",
-      "399410", "80099116", "80099118", "988291", "988093", "80024647",
-      "80016840", "985911", "988015", "983197", "983205", "572917",
-      "80087232", "80097276", "80097277", "80060870", "988281",
-      "80083791", "988276",
-    ],
-  },
-  {
-    name: "Rose/Sparkling",
-    upcs: [
-      "80085899", "80093814", "80082106", "80091929", "551085",
-      "80003789", "80003392", "80082731", "80099662", "80084918",
-      "80084913", "80087073", "80096832", "80093810", "80087746",
-      "80095733", "80095186", "80097278", "80082765", "80086329",
-      "80087074", "80091768",
-    ],
-  },
-  {
-    name: "Large Format",
-    upcs: [
-      "80090370", "80094019", "80090375", "80090372", "80096815",
-      "80099115", "80099114", "80010516", "80010511", "80010385",
-      "80010509", "80089861", "80010517", "80010507", "80010506",
-      "80003157", "80012293", "587584", "587659",
-    ],
-  },
-  {
-    name: "Refreshments",
-    upcs: [
-      "80087830", "80087831", "80091006", "80090894", "80091007",
-      "80091005", "80095810", "80095811", "80084701", "80091013",
-      "240333", "984914", "80065964", "80082375", "80003052",
-      "80057695", "80064690", "80082372", "80088150", "80092651",
-      "80092647",
-    ],
-  },
-  {
-    name: "CVQA",
-    upcs: [
-      "80086441", "80086442", "80098880", "80086423", "80086422",
-      "80090817", "80086425", "80086424", "80098033", "80098470",
-      "80059009", "80059136", "80059011", "80086431", "80086432",
-      "80059144", "80059012", "80059194", "80099449", "80058787",
-      "80058788", "80098032", "80059022", "80090814", "80086437",
-      "80086439", "80086436", "80090816", "80059024", "80059026",
-      "80059212", "80059213", "80059124", "80059125",
-    ],
-  },
-];
+const CATEGORY_CONFIG = CATEGORY_ORDER.map(name => ({
+  name,
+  upcs: PRODUCT_CATALOG
+    .filter(product => product.category === name)
+    .map(product => product.sku),
+}));
 
 const categoryByUpc = new Map();
 const orderByUpc = new Map();
@@ -121,7 +54,7 @@ registerServiceWorker();
 
 function defaultState() {
   return {
-    inventory: { products: [] },
+    inventory: { products: catalogProducts() },
     sales: { sessions: [], activeSessionId: null },
     processing: {
       matched: [],
@@ -134,6 +67,74 @@ function defaultState() {
   };
 }
 
+function catalogProducts() {
+  return PRODUCT_CATALOG.map(product => ({
+    id: normalizeUpc(product.sku),
+    name: product.description,
+    category: product.category,
+    quantity: 0,
+    originalQuantity: 0,
+    backstock: 0,
+    originalBackstock: 0,
+    lastUpdated: null,
+    notes: "",
+    overrideCases: "",
+    onSale: false,
+    isCatalogProduct: true,
+  }));
+}
+
+function mergeProductsWithCatalog(products) {
+  const byId = new Map();
+  for (const product of products || []) {
+    const id = normalizeUpc(product.id || product.sku);
+    if (!id) continue;
+    byId.set(id, {
+      ...product,
+      id,
+      name: cleanText(product.name || product.description) || "Unnamed product",
+    });
+  }
+
+  const mergedCatalog = PRODUCT_CATALOG.map(catalogProduct => {
+    const id = normalizeUpc(catalogProduct.sku);
+    const existing = byId.get(id);
+    return {
+      id,
+      name: catalogProduct.description,
+      category: catalogProduct.category,
+      quantity: existing?.quantity ?? 0,
+      originalQuantity: existing?.originalQuantity ?? existing?.quantity ?? 0,
+      backstock: existing?.backstock ?? 0,
+      originalBackstock: existing?.originalBackstock ?? existing?.backstock ?? 0,
+      lastUpdated: existing?.lastUpdated || null,
+      notes: existing?.notes || "",
+      overrideCases: existing?.overrideCases ?? "",
+      onSale: existing?.onSale || false,
+      isCatalogProduct: true,
+    };
+  });
+
+  const unknownProducts = [...byId.values()]
+    .filter(product => !skuToProductMap.has(product.id))
+    .map(product => ({
+      id: product.id,
+      name: product.name || "Unnamed product",
+      category: "Unmatched Products",
+      quantity: product.quantity ?? 0,
+      originalQuantity: product.originalQuantity ?? product.quantity ?? 0,
+      backstock: product.backstock ?? 0,
+      originalBackstock: product.originalBackstock ?? product.backstock ?? 0,
+      lastUpdated: product.lastUpdated || null,
+      notes: product.notes || "",
+      overrideCases: product.overrideCases ?? "",
+      onSale: product.onSale || false,
+      isCatalogProduct: false,
+    }));
+
+  return sortProducts([...mergedCatalog, ...unknownProducts]);
+}
+
 function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -142,7 +143,7 @@ function loadState() {
     return {
       ...defaultState(),
       ...parsed,
-      inventory: { products: parsed.inventory?.products || [] },
+      inventory: { products: mergeProductsWithCatalog(parsed.inventory?.products || []) },
       sales: {
         sessions: parsed.sales?.sessions || [],
         activeSessionId: parsed.sales?.activeSessionId || null,
@@ -211,25 +212,10 @@ async function handleInventoryFile(file) {
     setStatus(`Reading ${file.name}...`);
     const rows = await parseFileRows(file);
     const imported = parseInventoryRows(rows);
-    const existingById = new Map(state.inventory.products.map(product => [product.id, product]));
-    const now = new Date().toISOString();
-
-    const merged = imported.map(product => {
-      const existing = existingById.get(product.id);
-      return {
-        ...product,
-        quantity: product.quantity ?? existing?.quantity ?? 0,
-        originalQuantity: product.quantity ?? existing?.originalQuantity ?? existing?.quantity ?? 0,
-        backstock: product.backstock ?? existing?.backstock ?? 0,
-        originalBackstock: product.backstock ?? existing?.originalBackstock ?? existing?.backstock ?? 0,
-        lastUpdated: existing?.lastUpdated || now,
-        notes: existing?.notes || "",
-        overrideCases: existing?.overrideCases ?? "",
-        onSale: existing?.onSale || false,
-      };
-    });
-
-    state.inventory.products = sortProducts(merged);
+    state.inventory.products = mergeProductsWithCatalog([
+      ...state.inventory.products,
+      ...imported,
+    ]);
     recalculateRecommendations();
     saveState();
     setStatus(`Loaded ${imported.length} inventory products from ${file.name}.`);
@@ -295,10 +281,10 @@ function parseInventoryRows(rows) {
     products.push({
       id,
       name: name || "Unnamed product",
-      quantity: parseWholeNumber(row[quantityIndex]),
-      originalQuantity: parseWholeNumber(row[quantityIndex]),
-      backstock: parseWholeNumber(row[backstockIndex]),
-      originalBackstock: parseWholeNumber(row[backstockIndex]),
+      quantity: quantityIndex >= 0 ? parseWholeNumber(row[quantityIndex]) : undefined,
+      originalQuantity: quantityIndex >= 0 ? parseWholeNumber(row[quantityIndex]) : undefined,
+      backstock: backstockIndex >= 0 ? parseWholeNumber(row[backstockIndex]) : undefined,
+      originalBackstock: backstockIndex >= 0 ? parseWholeNumber(row[backstockIndex]) : undefined,
       lastUpdated: new Date().toISOString(),
       notes: "",
       overrideCases: "",
@@ -345,7 +331,11 @@ function parseSalesRows(rows) {
 }
 
 function processSalesRows(salesRows) {
-  const productById = new Map(state.inventory.products.map(product => [product.id, product]));
+  const productById = new Map(
+    state.inventory.products
+      .filter(product => skuToProductMap.has(product.id))
+      .map(product => [product.id, product]),
+  );
   const salesById = new Map();
   const unmatched = [];
 
@@ -377,7 +367,7 @@ function processSalesRows(salesRows) {
 function recalculateRecommendations() {
   const salesById = new Map(state.processing.matched.map(item => [item.id, item]));
   state.processing.recommendations = sortProducts(state.inventory.products)
-    .filter(product => categoryByUpc.has(product.id))
+    .filter(product => skuToProductMap.has(product.id))
     .map(product => {
       const sales = salesById.get(product.id);
       const unitsSold = sales?.unitsSold ?? 0;
@@ -479,12 +469,14 @@ function renderLastSaved() {
 
 function renderInventorySummary() {
   const visible = state.inventory.products.filter(product => categoryByUpc.has(product.id));
+  const unknown = state.inventory.products.filter(product => !categoryByUpc.has(product.id));
   const totalFront = visible.reduce((sum, product) => sum + Number(product.quantity || 0), 0);
   const totalBack = visible.reduce((sum, product) => sum + Number(product.backstock || 0), 0);
   dom.inventorySummary.innerHTML = [
     metric("Products", visible.length),
     metric("Front Units", totalFront),
     metric("Backstock Cases", totalBack),
+    metric("Unmatched Products", unknown.length),
   ].join("");
 }
 
@@ -503,11 +495,9 @@ function renderOrderingSummary() {
 }
 
 function renderInventoryTable() {
-  const visibleProducts = sortProducts(state.inventory.products).filter(product => categoryByUpc.has(product.id));
-  if (!visibleProducts.length) {
-    dom.inventoryTable.innerHTML = `<div class="empty-state">Upload an inventory file with JDE/UPC and Description columns.</div>`;
-    return;
-  }
+  const sortedProducts = sortProducts(state.inventory.products);
+  const visibleProducts = sortedProducts.filter(product => categoryByUpc.has(product.id));
+  const unknownProducts = sortedProducts.filter(product => !categoryByUpc.has(product.id));
 
   let html = `<table><thead><tr>
     <th>JDE/UPC</th><th>Description</th><th class="center-cell">Front</th>
@@ -528,6 +518,19 @@ function renderInventoryTable() {
       </tr>`;
     }
   }
+  if (unknownProducts.length) {
+    html += `<tr class="category-row"><td colspan="6">Unmatched Products</td></tr>`;
+    for (const product of unknownProducts) {
+      html += `<tr data-id="${escapeHtml(product.id)}">
+        <td>${escapeHtml(product.id)}</td>
+        <td class="desc-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}</td>
+        <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
+        <td class="number-cell">${quantityControl(product.id, "backstock", product.backstock || 0)}</td>
+        <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
+        <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} /></td>
+      </tr>`;
+    }
+  }
   html += "</tbody></table>";
   dom.inventoryTable.innerHTML = html;
 }
@@ -535,7 +538,7 @@ function renderInventoryTable() {
 function renderOrderingTable() {
   const recommendations = state.processing.recommendations || [];
   if (!recommendations.length) {
-    dom.orderingTable.innerHTML = `<div class="empty-state">Upload sales and inventory files to calculate order recommendations.</div>`;
+    dom.orderingTable.innerHTML = `<div class="empty-state">Upload a sales file to calculate order recommendations from the built-in catalog.</div>`;
     dom.applyDeductionButton.disabled = true;
     dom.deductionStatus.textContent = "";
     return;
@@ -770,9 +773,14 @@ function quantityControl(id, field, value) {
 
 function sortProducts(products) {
   return [...products].sort((a, b) => {
-    const aKey = orderByUpc.get(a.id) || "99:999";
-    const bKey = orderByUpc.get(b.id) || "99:999";
-    if (aKey !== bKey) return aKey.localeCompare(bKey);
+    const aOrder = fixedProductOrderIndex.get(a.id);
+    const bOrder = fixedProductOrderIndex.get(b.id);
+    const aCategory = aOrder?.categoryIndex ?? 99;
+    const bCategory = bOrder?.categoryIndex ?? 99;
+    if (aCategory !== bCategory) return aCategory - bCategory;
+    const aItem = aOrder?.itemIndex ?? 9999;
+    const bItem = bOrder?.itemIndex ?? 9999;
+    if (aItem !== bItem) return aItem - bItem;
     return (a.name || "").localeCompare(b.name || "");
   });
 }
