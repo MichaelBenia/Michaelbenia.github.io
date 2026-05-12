@@ -169,6 +169,20 @@ h2 {
   justify-content: flex-start;
 }
 
+.settings-gear {
+  margin-left: auto;
+  min-width: 38px;
+  border: 1px solid var(--border);
+  background: white;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.settings-gear:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
 .store-bar label {
   color: var(--primary-dark);
   font-size: 0.78rem;
