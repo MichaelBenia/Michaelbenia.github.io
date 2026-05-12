@@ -3,6 +3,25 @@ const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
 const DEFAULT_STORE_NUMBER = "default";
 const FIREBASE_SAVE_DEBOUNCE_MS = 900;
 const DEFAULT_TARGET_WEEKS = 2;
+const SKU_HEADER_ALIASES = [
+  "jde",
+  "sku",
+  "upc",
+  "jde/upc",
+  "jde/upc #",
+  "jde upc",
+  "jde upc #",
+  "jde #",
+  "upc #",
+  "sku #",
+  "item number",
+  "product number",
+  "sku / id",
+  "sku/id",
+  "id",
+  "barcode",
+  "product code",
+];
 
 const CATEGORY_CONFIG = CATEGORY_ORDER.map(name => ({
   name,
@@ -593,13 +612,13 @@ async function handleSalesFile(file) {
 function parseInventoryRows(rows) {
   if (!rows.length) throw new Error("Inventory file is empty.");
   const header = rows[0].map(cell => String(cell || "").trim());
-  const upcIndex = findColumn(header, ["jde/upc", "jde upc", "jde", "upc", "sku / id", "sku/id", "id", "barcode", "product code"]);
-  const descriptionIndex = findColumn(header, ["description", "product", "product name", "name", "item description"]);
+  const upcIndex = findColumn(header, SKU_HEADER_ALIASES);
+  const descriptionIndex = findColumn(header, ["description", "product", "product name", "name", "item description", "item"]);
   const quantityIndex = findColumn(header, ["quantity", "front", "front units", "front of house", "front - units"]);
   const backstockIndex = findColumn(header, ["backstock", "backstock cases", "back of house", "back - cases"]);
 
-  if (upcIndex < 0) throw new Error("Inventory file is missing a JDE/UPC column.");
-  if (descriptionIndex < 0) throw new Error("Inventory file is missing a Description column.");
+  if (upcIndex < 0) throw new Error(`Could not find JDE/UPC column. Detected columns: ${detectedHeaderSummary(header)}`);
+  if (descriptionIndex < 0) throw new Error(`Could not find Description column. Detected columns: ${detectedHeaderSummary(header)}`);
 
   const products = [];
   const seen = new Set();
@@ -631,11 +650,12 @@ function parseInventoryRows(rows) {
 function parseSalesRows(rows) {
   if (!rows.length) throw new Error("Sales file is empty.");
   const header = rows[0].map(cell => String(cell || "").trim());
-  const upcIndex = columnOrFallback(header, ["jde/upc", "jde upc", "jde", "upc", "sku / id", "sku/id", "barcode", "product code"], 1);
-  const descriptionIndex = columnOrFallback(header, ["description", "product", "product name", "name", "item description"], 1);
-  const packIndex = columnOrFallback(header, ["pack", "size", "package", "description"], 2);
+  const upcIndex = findColumn(header, SKU_HEADER_ALIASES);
+  const descriptionIndex = columnOrFallback(header, ["description", "product", "product name", "name", "item description", "item"], 2);
+  const packIndex = columnOrFallback(header, ["pack", "size", "package", "sub brand", "description", "item"], 3);
   const unitsIndex = columnOrFallback(header, ["units sold", "units", "quantity sold", "sold"], 4);
-  if (unitsIndex < 0) throw new Error("Sales file is missing a Units Sold column.");
+  if (upcIndex < 0) throw new Error(`Could not find JDE/UPC column. Detected columns: ${detectedHeaderSummary(header)}`);
+  if (unitsIndex < 0) throw new Error(`Could not find Units column. Detected columns: ${detectedHeaderSummary(header)}`);
 
   const salesRows = [];
   for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
@@ -1353,8 +1373,11 @@ function cssEscape(value) {
 }
 
 function findColumn(header, aliases) {
-  const normalized = header.map(normalizeHeader);
-  return normalized.findIndex(value => aliases.map(normalizeHeader).includes(value));
+  const normalizedAliases = aliases.flatMap(headerVariants);
+  return header.findIndex(value => {
+    const variants = headerVariants(value);
+    return variants.some(variant => normalizedAliases.includes(variant));
+  });
 }
 
 function columnOrFallback(header, aliases, fallback) {
@@ -1363,7 +1386,29 @@ function columnOrFallback(header, aliases, fallback) {
 }
 
 function normalizeHeader(value) {
-  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/#/g, "")
+    .replace(/[\/\-_]+/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactHeader(value) {
+  return normalizeHeader(value).replace(/\s+/g, "");
+}
+
+function headerVariants(value) {
+  return [normalizeHeader(value), compactHeader(value)].filter(Boolean);
+}
+
+function detectedHeaderSummary(header) {
+  const detected = header.map(cleanText).filter(Boolean);
+  if (!detected.length) return "none";
+  const preview = detected.slice(0, 12).join(", ");
+  return detected.length > 12 ? `${preview}...` : preview;
 }
 
 function normalizeUpc(value) {
