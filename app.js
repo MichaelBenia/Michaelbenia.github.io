@@ -523,7 +523,7 @@ function renderInventoryTable() {
     if (!products.length) continue;
     html += `<tr class="category-row"><td colspan="6">${escapeHtml(section.name)}</td></tr>`;
     for (const product of products) {
-      html += `<tr class="${product.onSale ? "sale-item" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
+      html += `<tr class="${product.onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(product.id)}</td>
         <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
         <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
@@ -536,7 +536,7 @@ function renderInventoryTable() {
   if (unknownProducts.length) {
     html += `<tr class="category-row"><td colspan="6">Unmatched Products</td></tr>`;
     for (const product of unknownProducts) {
-      html += `<tr class="${product.onSale ? "sale-item" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
+      html += `<tr class="${product.onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(product.id)}" title="${product.onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(product.id)}</td>
         <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
         <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
@@ -581,7 +581,7 @@ function renderOrderingTable() {
     for (const item of rows) {
       const statusClass = item.status === "Order Needed" ? "status-order" : "status-ok";
       const onSale = getProduct(item.id)?.onSale === true;
-      html += `<tr class="${onSale ? "sale-item" : ""}" data-id="${escapeHtml(item.id)}" title="${onSale ? "This item is currently marked as on sale." : ""}">
+      html += `<tr class="${onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(item.id)}" title="${onSale ? "This item is currently marked as on sale." : ""}">
         <td>${escapeHtml(item.id)}</td>
         <td class="desc-cell product-name-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}${onSale ? saleBadge({ onSale: true }) : ""}</td>
         <td class="number-cell">${formatNumber(item.unitsSold)}</td>

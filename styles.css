@@ -313,36 +313,66 @@ tr:nth-child(even):not(.category-row) td {
   background: #fdfbff;
 }
 
-tr.sale-item td,
-tr.sale-item:nth-child(even):not(.category-row) td {
-  background: #fff4cf;
-  border-top: 1px solid #f0b84d;
-  border-bottom: 1px solid #f0b84d;
-  box-shadow: inset 4px 0 0 #d97706;
+tr.sale-item-row,
+tr.sale-item-row td,
+tr.sale-item-row:nth-child(even):not(.category-row) td {
+  background: #ffb6d5 !important;
 }
 
-tr.sale-item:hover td {
-  background: #ffedb0;
+tr.sale-item-row {
+  border: 2px solid #ff4fa3;
+  box-shadow: 0 0 0 1px rgba(255, 79, 163, 0.42), 0 4px 14px rgba(255, 79, 163, 0.22);
 }
 
-tr.sale-item .product-name-cell {
-  color: #3b2600;
+tr.sale-item-row td:first-child {
+  border-left: 2px solid #ff4fa3;
+}
+
+tr.sale-item-row td:last-child {
+  border-right: 2px solid #ff4fa3;
+}
+
+tr.sale-item-row:hover,
+tr.sale-item-row:hover td {
+  background: #ffa6cb !important;
+}
+
+tr.sale-item-row td,
+tr.sale-item-row input,
+tr.sale-item-row button,
+tr.sale-item-row span,
+tr.sale-item-row div {
+  background-color: transparent !important;
+}
+
+tr.sale-item-row input,
+tr.sale-item-row button {
+  border-color: #d61f7b !important;
+}
+
+tr.sale-item-row .product-name-cell {
+  color: #4d0a2a;
   font-weight: 950;
+}
+
+tr.sale-item-row .sale-badge {
+  background: #b00063 !important;
 }
 
 .sale-badge {
   display: inline-block;
-  margin-left: 7px;
-  border: 1px solid #b45309;
+  float: right;
+  margin-left: 8px;
+  border: 1px solid #7a003f;
   border-radius: 999px;
-  padding: 2px 7px;
-  background: #d97706;
-  color: #fffaf0;
+  padding: 2px 8px;
+  background: #b00063;
+  color: white;
   font-size: 0.66rem;
   font-weight: 950;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   vertical-align: middle;
-  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.22);
+  box-shadow: 0 2px 8px rgba(176, 0, 99, 0.28);
 }
 
 .category-row td {
