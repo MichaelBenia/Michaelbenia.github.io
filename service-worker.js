@@ -1,4 +1,4 @@
-const CACHE_NAME = "wine-order-count-static-v5";
+const CACHE_NAME = "wine-order-count-static-v6";
 const ASSETS = [
   "./",
   "./index.html",
@@ -32,6 +32,15 @@ self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.hostname.includes("supabase.co")) return;
+  if (
+    url.pathname.endsWith("app.js")
+    || url.pathname.endsWith("index.html")
+    || url.pathname.endsWith("styles.css")
+    || url.pathname.endsWith("catalog.js")
+  ) {
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+    return;
+  }
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;

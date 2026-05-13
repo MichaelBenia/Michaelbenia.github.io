@@ -65,6 +65,10 @@ Uploaded sales and inventory files are stored as parsed app data inside the sele
 
 Use **Refresh Stores** to pull the shared store list from Supabase and refresh the currently selected store. Use **Reload Store Data** to force a fresh load of the selected store's `store_app_state.app_state` from Supabase on another device.
 
+When a store is selected, the app subscribes to Supabase Realtime updates for that store's `store_app_state` row. To enable live cross-device updates, run the Realtime line in `supabase-setup.sql` or enable Realtime for `store_app_state` in the Supabase dashboard under Database > Replication.
+
+If a device seems stuck on old JavaScript, use **Settings > Clear App Cache**. The service worker bypasses Supabase requests and uses network-first loading for `index.html`, `styles.css`, and `app.js`.
+
 ### Supabase Setup SQL
 
 Run the SQL in `supabase-setup.sql` in your Supabase SQL editor.

@@ -49,3 +49,8 @@ on stores
 for update
 using (true)
 with check (true);
+
+-- Enable Realtime for cross-device live updates.
+-- If this table is already in the publication, Supabase/Postgres may report
+-- that it already exists; that is safe to ignore.
+alter publication supabase_realtime add table store_app_state;

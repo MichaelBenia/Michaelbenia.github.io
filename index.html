@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#6431ca" />
     <title>Wine Order Count</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=20260513-sync" />
   </head>
   <body>
     <div class="app-shell">
@@ -151,6 +151,15 @@
               </p>
             </section>
             <section class="card">
+              <h2>App Cache</h2>
+              <button id="clearAppCacheButton" class="secondary-button danger">
+                Clear App Cache
+              </button>
+              <p class="small-muted">
+                Clears cached website files and reloads the app. Store data remains in Supabase.
+              </p>
+            </section>
+            <section class="card">
               <h2>Default Store</h2>
               <div class="default-store-display">
                 <span>Current store</span>
@@ -185,7 +194,7 @@
         );
       }
     </script>
-    <script src="catalog.js"></script>
-    <script src="app.js"></script>
+    <script src="catalog.js?v=20260513-sync"></script>
+    <script src="app.js?v=20260513-sync"></script>
   </body>
 </html>

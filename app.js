@@ -3,7 +3,7 @@ const STORE_STORAGE_PREFIX = "wineAppState_store";
 const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
 const DEFAULT_STORE_KEY = "defaultStoreNumber";
 const UNSELECTED_STORE_CACHE_KEY = "__unselected__";
-const SUPABASE_SAVE_DEBOUNCE_MS = 900;
+const SUPABASE_SAVE_DEBOUNCE_MS = 750;
 const SUPABASE_URL = "https://bhuwrwqkwuuzjomskjky.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_iiViQ666fswJ84JaNeNIiw_pHHWR_8A";
 const DEFAULT_TARGET_WEEKS = 2;
@@ -79,6 +79,7 @@ const dom = {
   clearSaleFlagsButton: document.getElementById("clearSaleFlagsButton"),
   restoreDeletedItemsButton: document.getElementById("restoreDeletedItemsButton"),
   clearAllButton: document.getElementById("clearAllButton"),
+  clearAppCacheButton: document.getElementById("clearAppCacheButton"),
   saleOnlyToggle: document.getElementById("saleOnlyToggle"),
   settingsExportInventoryButton: document.getElementById("settingsExportInventoryButton"),
   settingsExportOrdersButton: document.getElementById("settingsExportOrdersButton"),
@@ -93,6 +94,8 @@ let editingProductId = null;
 let syncStatus = "Local backup saved";
 let isSwitchingStore = false;
 let supabaseClientPromise = null;
+let currentStoreChannel = null;
+let lastLocalSaveAt = 0;
 
 bindEvents();
 render();
@@ -191,12 +194,22 @@ async function getSupabaseStoreState(storeNumber) {
 
 async function loadSupabaseStores() {
   const supabase = await getSupabaseClient();
-  const { data, error } = await supabase
+  const { data: storeRows, error: storeError } = await supabase
     .from("stores")
     .select("store_number")
     .order("store_number", { ascending: true });
-  if (error) throw error;
-  return [...new Set((data || []).map(row => cleanText(row.store_number)).filter(Boolean))];
+  if (storeError) throw storeError;
+
+  const { data: appStateRows, error: appStateError } = await supabase
+    .from("store_app_state")
+    .select("store_number")
+    .order("store_number", { ascending: true });
+  if (appStateError) throw appStateError;
+
+  return [...new Set([
+    ...(storeRows || []).map(row => cleanText(row.store_number)),
+    ...(appStateRows || []).map(row => cleanText(row.store_number)),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 
 async function upsertSupabaseStore(storeNumber) {
@@ -214,18 +227,22 @@ async function upsertSupabaseStore(storeNumber) {
 async function saveSupabaseStoreState(storeNumber, appState) {
   const supabase = await getSupabaseClient();
   const updatedAt = new Date().toISOString();
-  const { error } = await supabase
+  const payload = {
+    ...appState,
+    updatedAt,
+  };
+  const { data, error } = await supabase
     .from("store_app_state")
     .upsert({
       store_number: String(storeNumber),
-      app_state: {
-        ...appState,
-        updatedAt,
-      },
+      app_state: payload,
       updated_at: updatedAt,
-    });
+    })
+    .select("store_number, updated_at")
+    .single();
   if (error) throw error;
   await upsertSupabaseStore(storeNumber);
+  return { data, appState: payload };
 }
 
 async function createSupabaseStoreIfMissing(storeNumber) {
@@ -382,10 +399,16 @@ function loadState(storeNumber = currentStoreNumber || "") {
 
 function saveLocalBackup() {
   state.lastSaved = new Date().toISOString();
+  state.updatedAt = state.lastSaved;
   state.storeNumber = currentStoreNumber;
   localStorage.setItem(storageKeyForStore(currentStoreNumber), JSON.stringify(state));
   saveStoreRegistry();
   renderLastSaved();
+}
+
+function saveLocalCache(storeNumber, appState) {
+  localStorage.setItem(storageKeyForStore(storeNumber), JSON.stringify(appState));
+  saveStoreRegistry();
 }
 
 function saveState({ showConfirmation = false } = {}) {
@@ -436,8 +459,14 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
   try {
     setSyncStatus(`Saving Store ${storeNumber} to Supabase…`);
     const appState = serializeStateForSupabase();
+    lastLocalSaveAt = Date.now();
     console.log("Saving to Supabase store:", storeNumber, appState);
-    await saveSupabaseStoreState(storeNumber, appState);
+    const result = await saveSupabaseStoreState(storeNumber, appState);
+    if (storeNumber === currentStoreNumber) {
+      state.updatedAt = result.appState.updatedAt;
+      saveLocalCache(storeNumber, state);
+    }
+    console.log("Supabase save result:", result);
     if (storeNumber === currentStoreNumber) setSyncStatus(`Store ${storeNumber} synced to Supabase`);
     return true;
   } catch (error) {
@@ -500,6 +529,7 @@ function serializeStateForSupabase() {
     categoryState: cleanState.categoryState || {},
     settings: cleanState.settings || {},
     clientLastSaved: cleanState.lastSaved || null,
+    updatedAt: new Date().toISOString(),
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -575,6 +605,7 @@ function bindEvents() {
   dom.clearSaleFlagsButton.addEventListener("click", clearAllSaleFlags);
   dom.restoreDeletedItemsButton.addEventListener("click", restoreDeletedInventoryItems);
   dom.clearAllButton.addEventListener("click", clearAllLocalData);
+  dom.clearAppCacheButton.addEventListener("click", clearAppCache);
   dom.settingsExportInventoryButton.addEventListener("click", exportInventoryCsv);
   dom.settingsExportOrdersButton.addEventListener("click", exportOrdersCsv);
   dom.targetWeeksInput.addEventListener("change", () => {
@@ -641,9 +672,72 @@ async function reloadCurrentStoreData() {
   await loadSelectedStoreFromSupabase();
 }
 
+function renderAll() {
+  render();
+}
+
+function applyAppState(incomingState, storeNumber = currentStoreNumber) {
+  state = hydrateStateFromRemote(incomingState, storeNumber);
+  refreshProcessingFromActiveSales();
+}
+
+function isIncomingStateNewer(incomingState) {
+  const incomingTime = Date.parse(incomingState?.updatedAt || incomingState?.lastUpdated || incomingState?.clientLastSaved || "");
+  const localTimes = [state?.updatedAt, state?.lastUpdated, state?.lastSaved]
+    .map(value => Date.parse(value || ""))
+    .filter(Number.isFinite);
+  const localTime = localTimes.length ? Math.max(...localTimes) : NaN;
+  if (!Number.isFinite(incomingTime)) return true;
+  if (!Number.isFinite(localTime)) return true;
+  return incomingTime > localTime;
+}
+
+async function subscribeToStore(storeNumber) {
+  const normalizedStore = cleanText(storeNumber);
+  const supabase = await getSupabaseClient();
+  if (currentStoreChannel) {
+    await supabase.removeChannel(currentStoreChannel);
+    currentStoreChannel = null;
+  }
+  if (!normalizedStore) return;
+
+  console.log("Subscribing to Supabase realtime store:", normalizedStore);
+  currentStoreChannel = supabase
+    .channel(`store-${normalizedStore}`)
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "store_app_state",
+        filter: `store_number=eq.${normalizedStore}`,
+      },
+      payload => {
+        console.log("Realtime store update received:", payload);
+        const incomingState = payload.new?.app_state;
+        if (!incomingState) return;
+        if (Date.now() - lastLocalSaveAt < 1000) return;
+        if (!isIncomingStateNewer(incomingState)) return;
+        applyAppState(incomingState, normalizedStore);
+        saveLocalCache(normalizedStore, state);
+        renderAll();
+        setSyncStatus("Store updated from Supabase");
+        setStatus(`Store ${normalizedStore} updated from Supabase`);
+      },
+    )
+    .subscribe(status => {
+      console.log("Supabase realtime status:", status);
+      if (status === "SUBSCRIBED") setSyncStatus("Listening for live updates");
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        setSyncStatus("Supabase offline, using local backup");
+      }
+    });
+}
+
 async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
   try {
     const remoteStores = await loadSupabaseStores();
+    console.log("Selected store before refresh:", currentStoreNumber);
     const defaultStore = getDefaultStoreNumber();
     const mergedStores = [...new Set(remoteStores.map(cleanText).filter(Boolean))]
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
@@ -660,7 +754,8 @@ async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
     renderDefaultStoreSettings();
     if (showConfirmation) showToast("Stores refreshed from Supabase.");
   } catch (error) {
-    setSyncStatus("Offline mode");
+    setSyncStatus("Supabase offline, using local backup");
+    setStatus("Supabase offline, using local backup", true);
     showSupabaseError(error);
   }
 }
@@ -710,6 +805,7 @@ async function switchStore(storeNumber) {
   editingProductId = null;
   render();
   isSwitchingStore = false;
+  if (!nextStore) await subscribeToStore("");
   await loadSelectedStoreFromSupabase();
 }
 
@@ -750,12 +846,12 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     console.log("Loaded from Supabase store:", storeNumber, remoteState);
     if (storeNumber !== currentStoreNumber) return;
     if (remoteState) {
-      state = hydrateStateFromRemote(remoteState, storeNumber);
-      refreshProcessingFromActiveSales();
-      localStorage.setItem(storageKeyForStore(storeNumber), JSON.stringify(state));
+      applyAppState(remoteState, storeNumber);
+      saveLocalCache(storeNumber, state);
       render();
       setSyncStatus(`Store ${storeNumber} loaded from Supabase`);
       setStatus(`Store ${storeNumber} loaded from Supabase`);
+      await subscribeToStore(storeNumber);
       return;
     }
     state = defaultState();
@@ -764,14 +860,17 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     render();
     if (createIfMissing) {
       await createSupabaseStoreIfMissing(storeNumber);
+      await subscribeToStore(storeNumber);
     } else {
       setStatus(`Store ${storeNumber} has no Supabase data yet. Starting with a blank store state.`);
+      await subscribeToStore(storeNumber);
     }
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
       state = loadState(storeNumber);
       render();
       setSyncStatus("Supabase failed, using local backup");
+      setStatus("Supabase offline, using local backup", true);
       showSupabaseError(error);
     }
   }
@@ -1464,6 +1563,7 @@ function applySalesDeduction() {
 function clearSalesData() {
   if (!confirm("Clear all prior sales data? Inventory counts will not be changed.")) return;
   state.sales = { sessions: [], activeSessionId: null };
+  state.uploads.sales = null;
   state.processing = { matched: [], unmatched: [], deductions: [], recommendations: [] };
   saveState();
   setStatus("Sales data cleared. Inventory was not changed.");
@@ -1508,6 +1608,28 @@ function clearAllLocalData() {
   saveState();
   setStatus(`Store ${currentStoreNumber} data cleared.`);
   showToast("Store data cleared.");
+}
+
+async function clearAppCache() {
+  if (!confirm("Clear cached app files and reload? Store data in Supabase will not be deleted.")) return;
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      for (const registration of registrations) {
+        await registration.unregister();
+      }
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(key => caches.delete(key)));
+    }
+    setStatus("Cache cleared. Reloading...");
+    showToast("Cache cleared.");
+    location.reload(true);
+  } catch (error) {
+    console.error("Cache clear failed:", error);
+    setStatus(`Cache clear failed: ${error?.message || "Unknown error"}`, true);
+  }
 }
 
 function exportInventoryCsv() {
@@ -1717,6 +1839,13 @@ function setStatus(message, isError = false) {
 
 function showSupabaseError(error) {
   console.error("Supabase error:", error);
+  console.error("Supabase error details:", {
+    message: error?.message,
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+    name: error?.name,
+  });
   setStatus(`Supabase error: ${error?.message || error?.code || "Unknown error"}`, true);
 }
 
@@ -1727,9 +1856,9 @@ function setSyncStatus(message) {
 
 function syncStatusClass(message) {
   if (message.includes("synced to Supabase") || message.includes("loaded from Supabase")) return "synced";
-  if (message.includes("Saving Store") || message.includes("Loading Store")) return "syncing";
+  if (message.includes("Saving Store") || message.includes("Loading Store") || message.includes("Listening for live updates")) return "syncing";
   if (message === "Offline mode") return "syncing";
-  if (message.includes("Supabase failed")) return "error";
+  if (message.includes("Supabase failed") || message.includes("Supabase offline")) return "error";
   return "local";
 }
 
