@@ -63,6 +63,8 @@ The **Save Progress** button writes a local backup first and then waits for the 
 
 Uploaded sales and inventory files are stored as parsed app data inside the selected store's Supabase state. Selecting the same store number on another device loads the same inventory counts, uploaded sales rows, parsed inventory rows, sale flags, deleted items, edits, recommendations, and settings from Supabase.
 
+Use **Refresh Stores** to pull the shared store list from Supabase and refresh the currently selected store. Use **Reload Store Data** to force a fresh load of the selected store's `store_app_state.app_state` from Supabase on another device.
+
 ### Supabase Setup SQL
 
 Run the SQL in `supabase-setup.sql` in your Supabase SQL editor.
