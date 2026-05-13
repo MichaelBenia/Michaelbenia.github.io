@@ -9,7 +9,14 @@ create table if not exists store_app_state (
   updated_at timestamptz default now()
 );
 
+create table if not exists stores (
+  store_number text primary key,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 alter table store_app_state enable row level security;
+alter table stores enable row level security;
 
 create policy "Allow public read"
 on store_app_state
@@ -23,6 +30,22 @@ with check (true);
 
 create policy "Allow public update"
 on store_app_state
+for update
+using (true)
+with check (true);
+
+create policy "Allow public store read"
+on stores
+for select
+using (true);
+
+create policy "Allow public store insert"
+on stores
+for insert
+with check (true);
+
+create policy "Allow public store update"
+on stores
 for update
 using (true)
 with check (true);

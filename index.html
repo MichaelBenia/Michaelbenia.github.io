@@ -29,7 +29,8 @@
         <label for="storeSelect">Store</label>
         <select id="storeSelect"></select>
         <button id="addStoreButton" class="secondary-button">Add Store</button>
-        <span id="currentStoreText" class="small-muted">Current store: default</span>
+        <button id="refreshStoresButton" class="secondary-button">Refresh Stores</button>
+        <span id="currentStoreText" class="small-muted">No store selected</span>
         <button id="settingsButton" class="ghost-button settings-gear" title="Settings" aria-label="Open settings">
           &#9881;
         </button>
@@ -152,7 +153,7 @@
               <h2>Default Store</h2>
               <div class="default-store-display">
                 <span>Current store</span>
-                <strong id="settingsCurrentStoreText">default</strong>
+                <strong id="settingsCurrentStoreText">No store selected</strong>
               </div>
               <div class="default-store-display">
                 <span>Default store</span>

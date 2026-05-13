@@ -2,7 +2,7 @@
 const STORE_STORAGE_PREFIX = "wineAppState_store";
 const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
 const DEFAULT_STORE_KEY = "defaultStoreNumber";
-const DEFAULT_STORE_NUMBER = "default";
+const UNSELECTED_STORE_CACHE_KEY = "__unselected__";
 const SUPABASE_SAVE_DEBOUNCE_MS = 900;
 const SUPABASE_URL = "https://bhuwrwqkwuuzjomskjky.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_iiViQ666fswJ84JaNeNIiw_pHHWR_8A";
@@ -51,6 +51,7 @@ const dom = {
   uploadInventoryButton: document.getElementById("uploadInventoryButton"),
   storeSelect: document.getElementById("storeSelect"),
   addStoreButton: document.getElementById("addStoreButton"),
+  refreshStoresButton: document.getElementById("refreshStoresButton"),
   currentStoreText: document.getElementById("currentStoreText"),
   syncStatusText: document.getElementById("syncStatusText"),
   saveProgressButton: document.getElementById("saveProgressButton"),
@@ -99,7 +100,7 @@ initializeSupabaseSync();
 
 function defaultState() {
   return {
-    storeNumber: currentStoreNumber || DEFAULT_STORE_NUMBER,
+    storeNumber: currentStoreNumber || "",
     inventory: { products: catalogProducts() },
     productOverrides: {},
     deletedItems: [],
@@ -119,24 +120,26 @@ function defaultState() {
 function loadStoreRegistry() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORE_REGISTRY_KEY) || "{}");
-    const stores = [...new Set((parsed.stores || [DEFAULT_STORE_NUMBER]).map(cleanText).filter(Boolean))];
+    const stores = [...new Set((parsed.stores || []).map(cleanText).filter(Boolean))];
     const defaultStore = getDefaultStoreNumber();
-    const currentStore = defaultStore || cleanText(parsed.currentStore) || stores[0] || DEFAULT_STORE_NUMBER;
-    if (!stores.includes(currentStore)) stores.unshift(currentStore);
+    const currentStore = defaultStore || "";
+    if (currentStore && !stores.includes(currentStore)) stores.unshift(currentStore);
     return { stores, currentStore };
   } catch {
     const defaultStore = getDefaultStoreNumber();
     return {
-      stores: [defaultStore || DEFAULT_STORE_NUMBER],
-      currentStore: defaultStore || DEFAULT_STORE_NUMBER,
+      stores: defaultStore ? [defaultStore] : [],
+      currentStore: defaultStore || "",
     };
   }
 }
 
 function saveStoreRegistry() {
+  const stores = [...new Set((storeRegistry.stores || []).map(cleanText).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   localStorage.setItem(STORE_REGISTRY_KEY, JSON.stringify({
-    stores: storeRegistry.stores,
-    currentStore: currentStoreNumber,
+    stores,
+    currentStore: cleanText(currentStoreNumber),
   }));
 }
 
@@ -145,15 +148,16 @@ function getDefaultStoreNumber() {
 }
 
 function storageKeyForStore(storeNumber) {
-  const safeStore = encodeURIComponent(cleanText(storeNumber) || DEFAULT_STORE_NUMBER);
+  const safeStore = encodeURIComponent(cleanText(storeNumber) || UNSELECTED_STORE_CACHE_KEY);
   return `${STORE_STORAGE_PREFIX}_${safeStore}`;
 }
 
 function migrateLegacyStorageIfNeeded(storeNumber) {
+  if (!cleanText(storeNumber)) return;
   const storeKey = storageKeyForStore(storeNumber);
   if (localStorage.getItem(storeKey)) return;
-  const oldStoreKey = `${STORAGE_KEY}_store_${encodeURIComponent(cleanText(storeNumber) || DEFAULT_STORE_NUMBER)}`;
-  const legacyState = localStorage.getItem(oldStoreKey) || (storeNumber === DEFAULT_STORE_NUMBER ? localStorage.getItem(STORAGE_KEY) : null);
+  const oldStoreKey = `${STORAGE_KEY}_store_${encodeURIComponent(cleanText(storeNumber))}`;
+  const legacyState = localStorage.getItem(oldStoreKey);
   if (legacyState) localStorage.setItem(storeKey, legacyState);
 }
 
@@ -180,6 +184,28 @@ async function getSupabaseStoreState(storeNumber) {
   return data?.app_state ? { ...data.app_state, supabaseUpdatedAt: data.updated_at } : null;
 }
 
+async function loadSupabaseStores() {
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("stores")
+    .select("store_number")
+    .order("store_number", { ascending: true });
+  if (error) throw error;
+  return [...new Set((data || []).map(row => cleanText(row.store_number)).filter(Boolean))];
+}
+
+async function upsertSupabaseStore(storeNumber) {
+  const supabase = await getSupabaseClient();
+  const updatedAt = new Date().toISOString();
+  const { error } = await supabase
+    .from("stores")
+    .upsert({
+      store_number: String(storeNumber),
+      updated_at: updatedAt,
+    });
+  if (error) throw error;
+}
+
 async function saveSupabaseStoreState(storeNumber, appState) {
   const supabase = await getSupabaseClient();
   const updatedAt = new Date().toISOString();
@@ -194,11 +220,18 @@ async function saveSupabaseStoreState(storeNumber, appState) {
       updated_at: updatedAt,
     });
   if (error) throw error;
+  await upsertSupabaseStore(storeNumber);
 }
 
 async function createSupabaseStoreIfMissing(storeNumber) {
+  await upsertSupabaseStore(storeNumber);
   const existing = await getSupabaseStoreState(storeNumber);
-  if (!existing) await saveSupabaseStoreState(storeNumber, serializeStateForSupabase());
+  if (!existing) {
+    state = defaultState();
+    state.storeNumber = storeNumber;
+    saveLocalBackup();
+    await saveSupabaseStoreState(storeNumber, serializeStateForSupabase());
+  }
 }
 
 function catalogProducts(meta = {}) {
@@ -300,7 +333,7 @@ function sourceSkuForProduct(product, meta = state) {
   return productId;
 }
 
-function loadState(storeNumber = currentStoreNumber || DEFAULT_STORE_NUMBER) {
+function loadState(storeNumber = currentStoreNumber || "") {
   try {
     migrateLegacyStorageIfNeeded(storeNumber);
     const raw = localStorage.getItem(storageKeyForStore(storeNumber));
@@ -410,7 +443,7 @@ async function saveProjectNow() {
 
 function selectedSupabaseStoreNumber() {
   const storeNumber = cleanText(currentStoreNumber);
-  return storeNumber && storeNumber !== DEFAULT_STORE_NUMBER ? storeNumber : "";
+  return storeNumber;
 }
 
 function serializeStateForSupabase() {
@@ -475,6 +508,7 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
 function bindEvents() {
   dom.storeSelect.addEventListener("change", event => switchStore(event.target.value));
   dom.addStoreButton.addEventListener("click", addStore);
+  dom.refreshStoresButton.addEventListener("click", () => refreshStoresFromSupabase({ showConfirmation: true }));
   dom.uploadSalesButton.addEventListener("click", () => dom.salesInput.click());
   dom.uploadInventoryButton.addEventListener("click", () => dom.inventoryInput.click());
   dom.salesInput.addEventListener("change", event => handleSalesFile(event.target.files?.[0]));
@@ -523,6 +557,9 @@ function bindEvents() {
 
 async function initializeSupabaseSync() {
   renderStoreSelector();
+  await refreshStoresFromSupabase();
+  state = loadState(currentStoreNumber);
+  render();
   if (!selectedSupabaseStoreNumber()) {
     setSyncStatus("Local backup saved");
     return;
@@ -535,24 +572,51 @@ async function initializeSupabaseSync() {
   }
 }
 
+async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
+  try {
+    const remoteStores = await loadSupabaseStores();
+    const defaultStore = getDefaultStoreNumber();
+    const mergedStores = [...new Set(remoteStores.map(cleanText).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+    storeRegistry.stores = mergedStores;
+    if (defaultStore && storeRegistry.stores.includes(defaultStore)) {
+      currentStoreNumber = defaultStore;
+    } else if (!storeRegistry.stores.includes(currentStoreNumber)) {
+      currentStoreNumber = "";
+    }
+    storeRegistry.currentStore = currentStoreNumber;
+    saveStoreRegistry();
+    renderStoreSelector();
+    renderDefaultStoreSettings();
+    if (showConfirmation) showToast("Stores refreshed from Supabase.");
+  } catch (error) {
+    setSyncStatus("Offline mode");
+    showSupabaseError(error);
+  }
+}
+
 async function addStore() {
   const storeNumber = cleanText(prompt("Enter store number:"));
   if (!storeNumber) {
     showToast("Store number cannot be blank.");
     return;
   }
+  currentStoreNumber = storeNumber;
+  storeRegistry.currentStore = storeNumber;
   if (!storeRegistry.stores.includes(storeNumber)) {
     storeRegistry.stores.push(storeNumber);
     storeRegistry.stores.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
-  currentStoreNumber = storeNumber;
-  storeRegistry.currentStore = storeNumber;
   saveStoreRegistry();
   state = loadState(currentStoreNumber);
   editingProductId = null;
   render();
   try {
     setSyncStatus("Saving to Supabase…");
+    await upsertSupabaseStore(storeNumber);
+    await createSupabaseStoreIfMissing(storeNumber);
+    await refreshStoresFromSupabase();
     await loadSelectedStoreFromSupabase({ createIfMissing: true });
     showToast(`Store ${storeNumber} selected.`);
   } catch (error) {
@@ -562,14 +626,14 @@ async function addStore() {
 }
 
 async function switchStore(storeNumber) {
-  const nextStore = cleanText(storeNumber) || DEFAULT_STORE_NUMBER;
+  const nextStore = cleanText(storeNumber);
   if (nextStore === currentStoreNumber) return;
   isSwitchingStore = true;
   clearTimeout(saveTimer);
   clearTimeout(supabaseSaveTimer);
   currentStoreNumber = nextStore;
   storeRegistry.currentStore = nextStore;
-  if (!storeRegistry.stores.includes(nextStore)) storeRegistry.stores.push(nextStore);
+  if (nextStore && !storeRegistry.stores.includes(nextStore)) storeRegistry.stores.push(nextStore);
   saveStoreRegistry();
   state = loadState(currentStoreNumber);
   editingProductId = null;
@@ -599,7 +663,7 @@ function clearDefaultStore() {
   if (!confirm(`Clear default store ${defaultStore}?`)) return;
   localStorage.removeItem(DEFAULT_STORE_KEY);
   renderDefaultStoreSettings();
-  setStatus("Default store cleared. The app will use the last selected store on startup.");
+  setStatus("Default store cleared. The store selector will open blank on startup.");
   showToast("Default store cleared.");
 }
 
@@ -899,10 +963,12 @@ function render() {
 }
 
 function renderStoreSelector() {
-  dom.storeSelect.innerHTML = storeRegistry.stores
+  const blankOption = `<option value="" ${currentStoreNumber ? "" : "selected"}></option>`;
+  const storeOptions = storeRegistry.stores
     .map(storeNumber => `<option value="${escapeHtml(storeNumber)}" ${storeNumber === currentStoreNumber ? "selected" : ""}>${escapeHtml(storeNumber)}</option>`)
     .join("");
-  dom.currentStoreText.textContent = `Current store: ${currentStoreNumber}`;
+  dom.storeSelect.innerHTML = `${blankOption}${storeOptions}`;
+  dom.currentStoreText.textContent = currentStoreNumber ? `Current store: ${currentStoreNumber}` : "No store selected";
 }
 
 function renderDefaultStoreSettings() {
@@ -1329,6 +1395,10 @@ function clearAllSaleFlags() {
 }
 
 function clearAllLocalData() {
+  if (!currentStoreNumber) {
+    showToast("Select or add a store before clearing store data.");
+    return;
+  }
   if (!confirm(`Clear all saved data for Store ${currentStoreNumber}? This will also sync the cleared state to Supabase when available.`)) return;
   localStorage.removeItem(storageKeyForStore(currentStoreNumber));
   state = defaultState();

@@ -36,11 +36,19 @@ Saved locally:
 
 ## Supabase Sync
 
-Use the **Store** dropdown at the top of the app to choose the active store number. All inventory counts, sales sessions, product edits, deleted items, sale flags, recommendations, deductions, and settings are saved in the `store_app_state` table:
+Use the **Store** dropdown at the top of the app to choose the active store number. Store numbers are loaded from the shared Supabase `stores` table, so a store added on one device appears on other devices after refresh. All inventory counts, sales sessions, product edits, deleted items, sale flags, recommendations, deductions, and settings are saved in the `store_app_state` table:
+
+There is no built-in default store option. If you have not chosen a default store in Settings, the store selector opens blank until you add or select a store.
 
 ```text
 store_app_state.store_number = {storeNumber}
 store_app_state.app_state = { full app state JSON }
+```
+
+The `stores` table holds the shared list of available store numbers:
+
+```text
+stores.store_number = {storeNumber}
 ```
 
 The app also keeps a per-store browser cache:
@@ -63,6 +71,12 @@ The included RLS policies are for personal testing only. They are public and una
 create table if not exists store_app_state (
   store_number text primary key,
   app_state jsonb not null,
+  updated_at timestamptz default now()
+);
+
+create table if not exists stores (
+  store_number text primary key,
+  created_at timestamptz default now(),
   updated_at timestamptz default now()
 );
 ```
