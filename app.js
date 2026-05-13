@@ -1,5 +1,6 @@
 ﻿const STORAGE_KEY = "wine-order-count-static-v1";
 const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
+const DEFAULT_STORE_KEY = "defaultStoreNumber";
 const DEFAULT_STORE_NUMBER = "default";
 const FIREBASE_SAVE_DEBOUNCE_MS = 900;
 const DEFAULT_TARGET_WEEKS = 2;
@@ -64,6 +65,10 @@ const dom = {
   deductionStatus: document.getElementById("deductionStatus"),
   toast: document.getElementById("toast"),
   targetWeeksInput: document.getElementById("targetWeeksInput"),
+  settingsCurrentStoreText: document.getElementById("settingsCurrentStoreText"),
+  defaultStoreText: document.getElementById("defaultStoreText"),
+  makeDefaultStoreButton: document.getElementById("makeDefaultStoreButton"),
+  clearDefaultStoreButton: document.getElementById("clearDefaultStoreButton"),
   clearSalesButton: document.getElementById("clearSalesButton"),
   clearInventoryButton: document.getElementById("clearInventoryButton"),
   clearSaleFlagsButton: document.getElementById("clearSaleFlagsButton"),
@@ -111,11 +116,16 @@ function loadStoreRegistry() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORE_REGISTRY_KEY) || "{}");
     const stores = [...new Set((parsed.stores || [DEFAULT_STORE_NUMBER]).map(cleanText).filter(Boolean))];
-    const currentStore = cleanText(parsed.currentStore) || stores[0] || DEFAULT_STORE_NUMBER;
+    const defaultStore = getDefaultStoreNumber();
+    const currentStore = defaultStore || cleanText(parsed.currentStore) || stores[0] || DEFAULT_STORE_NUMBER;
     if (!stores.includes(currentStore)) stores.unshift(currentStore);
     return { stores, currentStore };
   } catch {
-    return { stores: [DEFAULT_STORE_NUMBER], currentStore: DEFAULT_STORE_NUMBER };
+    const defaultStore = getDefaultStoreNumber();
+    return {
+      stores: [defaultStore || DEFAULT_STORE_NUMBER],
+      currentStore: defaultStore || DEFAULT_STORE_NUMBER,
+    };
   }
 }
 
@@ -124,6 +134,10 @@ function saveStoreRegistry() {
     stores: storeRegistry.stores,
     currentStore: currentStoreNumber,
   }));
+}
+
+function getDefaultStoreNumber() {
+  return cleanText(localStorage.getItem(DEFAULT_STORE_KEY));
 }
 
 function storageKeyForStore(storeNumber) {
@@ -425,6 +439,8 @@ function bindEvents() {
   dom.exportInventoryButton.addEventListener("click", exportInventoryCsv);
   dom.exportOrdersButton.addEventListener("click", exportOrdersCsv);
   dom.settingsButton.addEventListener("click", () => activateTab("settings"));
+  dom.makeDefaultStoreButton.addEventListener("click", makeCurrentStoreDefault);
+  dom.clearDefaultStoreButton.addEventListener("click", clearDefaultStore);
   dom.applyDeductionButton.addEventListener("click", applySalesDeduction);
   dom.clearSalesButton.addEventListener("click", clearSalesData);
   dom.clearInventoryButton.addEventListener("click", clearInventoryCounts);
@@ -524,6 +540,31 @@ async function switchStore(storeNumber) {
   render();
   isSwitchingStore = false;
   await loadSelectedStoreFromFirebase();
+}
+
+function makeCurrentStoreDefault() {
+  const storeNumber = cleanText(currentStoreNumber);
+  if (!storeNumber) {
+    showToast("Select or add a store number before setting a default.");
+    return;
+  }
+  localStorage.setItem(DEFAULT_STORE_KEY, storeNumber);
+  renderDefaultStoreSettings();
+  setStatus(`Store ${storeNumber} is now the default store.`);
+  showToast("Default store saved.");
+}
+
+function clearDefaultStore() {
+  const defaultStore = getDefaultStoreNumber();
+  if (!defaultStore) {
+    showToast("No default store is set.");
+    return;
+  }
+  if (!confirm(`Clear default store ${defaultStore}?`)) return;
+  localStorage.removeItem(DEFAULT_STORE_KEY);
+  renderDefaultStoreSettings();
+  setStatus("Default store cleared. The app will use the last selected store on startup.");
+  showToast("Default store cleared.");
 }
 
 async function loadSelectedStoreFromFirebase({ createIfMissing = false } = {}) {
@@ -814,6 +855,7 @@ function parseCsv(text) {
 
 function render() {
   renderStoreSelector();
+  renderDefaultStoreSettings();
   renderSyncStatus();
   renderLastSaved();
   dom.targetWeeksInput.value = state.settings.targetWeeks;
@@ -830,6 +872,13 @@ function renderStoreSelector() {
     .map(storeNumber => `<option value="${escapeHtml(storeNumber)}" ${storeNumber === currentStoreNumber ? "selected" : ""}>${escapeHtml(storeNumber)}</option>`)
     .join("");
   dom.currentStoreText.textContent = `Current store: ${currentStoreNumber}`;
+}
+
+function renderDefaultStoreSettings() {
+  const defaultStore = getDefaultStoreNumber();
+  dom.settingsCurrentStoreText.textContent = currentStoreNumber || "None selected";
+  dom.defaultStoreText.textContent = defaultStore || "None set";
+  dom.clearDefaultStoreButton.disabled = !defaultStore;
 }
 
 function renderSyncStatus() {
@@ -1544,6 +1593,7 @@ function registerServiceWorker() {
     });
   });
 }
+
 
 
 

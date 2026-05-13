@@ -148,6 +148,26 @@
                 Saved locally first, then synced to Firebase for the selected store.
               </p>
             </section>
+            <section class="card">
+              <h2>Default Store</h2>
+              <div class="default-store-display">
+                <span>Current store</span>
+                <strong id="settingsCurrentStoreText">default</strong>
+              </div>
+              <div class="default-store-display">
+                <span>Default store</span>
+                <strong id="defaultStoreText">None set</strong>
+              </div>
+              <button id="makeDefaultStoreButton" class="secondary-button">
+                Make Current Store Default
+              </button>
+              <button id="clearDefaultStoreButton" class="secondary-button danger">
+                Clear Default Store
+              </button>
+              <p class="small-muted">
+                The default store only controls which store opens first. Data still saves under the selected store.
+              </p>
+            </section>
           </div>
         </section>
       </main>
