@@ -61,6 +61,8 @@ If Supabase is unavailable, the app continues in local mode and syncs again when
 
 The **Save Progress** button writes a local backup first and then waits for the Supabase upsert to finish. A successful manual save shows **Project saved to Supabase**. If Supabase is unavailable or rejects the write, the app keeps the local backup and shows **Supabase save failed. Project saved locally only.**
 
+Uploaded sales and inventory files are stored as parsed app data inside the selected store's Supabase state. Selecting the same store number on another device loads the same inventory counts, uploaded sales rows, parsed inventory rows, sale flags, deleted items, edits, recommendations, and settings from Supabase.
+
 ### Supabase Setup SQL
 
 Run the SQL in `supabase-setup.sql` in your Supabase SQL editor.

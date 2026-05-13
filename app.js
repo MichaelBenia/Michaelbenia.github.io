@@ -105,6 +105,10 @@ function defaultState() {
     productOverrides: {},
     deletedItems: [],
     skuAliases: {},
+    uploads: {
+      sales: null,
+      inventory: null,
+    },
     sales: { sessions: [], activeSessionId: null },
     processing: {
       matched: [],
@@ -346,6 +350,10 @@ function loadState(storeNumber = currentStoreNumber || "") {
       productOverrides: parsed.productOverrides || {},
       deletedItems: parsed.deletedItems || [],
       skuAliases: parsed.skuAliases || {},
+      uploads: {
+        sales: parsed.uploads?.sales || parsed.uploadedSalesData || null,
+        inventory: parsed.uploads?.inventory || parsed.uploadedInventoryData || null,
+      },
       sales: {
         sessions: parsed.sales?.sessions || [],
         activeSessionId: parsed.sales?.activeSessionId || null,
@@ -386,6 +394,26 @@ function saveState({ showConfirmation = false } = {}) {
   if (showConfirmation) showToast("Supabase save queued.");
 }
 
+async function saveStateNowToSupabase({ successMessage = "Project saved to Supabase", silent = false } = {}) {
+  saveLocalBackup();
+  if (!selectedSupabaseStoreNumber()) {
+    setSyncStatus("Local backup saved");
+    if (!silent) showToast("Select or add a store number before saving to Supabase.");
+    return false;
+  }
+
+  try {
+    await syncCurrentStoreToSupabase({ throwOnError: true, silent: true });
+    if (!silent) showToast(successMessage);
+    return true;
+  } catch (error) {
+    setSyncStatus("Supabase save failed");
+    console.error("Supabase error:", error);
+    if (!silent) showToast("Supabase save failed. Project saved locally only.");
+    return false;
+  }
+}
+
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveState(), 250);
@@ -424,20 +452,14 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
 async function saveProjectNow() {
   clearTimeout(saveTimer);
   clearTimeout(supabaseSaveTimer);
-  if (!selectedSupabaseStoreNumber()) {
-    saveLocalBackup();
-    setSyncStatus("Local backup saved");
-    showToast("Select or add a store number before saving to Supabase.");
-    return;
-  }
-  saveLocalBackup();
-  try {
-    await syncCurrentStoreToSupabase({ throwOnError: true });
+  const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Project saved to Supabase", silent: true });
+  if (savedToSupabase) {
     showToast("Project saved to Supabase");
     setStatus(`Project saved to Supabase for Store ${currentStoreNumber}.`);
-  } catch (error) {
+  } else if (!selectedSupabaseStoreNumber()) {
+    showToast("Select or add a store number before saving to Supabase.");
+  } else {
     showToast("Supabase save failed. Project saved locally only.");
-    showSupabaseError(error);
   }
 }
 
@@ -458,6 +480,13 @@ function serializeStateForSupabase() {
     saleFlags: Object.fromEntries(products.map(product => [product.id, product.onSale === true])),
     salesData: cleanState.sales?.sessions || [],
     inventoryData: cleanState.inventory || { products: [] },
+    uploads: cleanState.uploads || { sales: null, inventory: null },
+    uploadedSalesData: cleanState.uploads?.sales || null,
+    uploadedInventoryData: cleanState.uploads?.inventory || null,
+    parsedSalesRows: cleanState.uploads?.sales?.parsedRows
+      || cleanState.sales?.sessions?.find(session => session.id === cleanState.sales?.activeSessionId)?.salesRows
+      || [],
+    parsedInventoryRows: cleanState.uploads?.inventory?.parsedRows || [],
     importedSalesFileData: cleanState.sales || { sessions: [], activeSessionId: null },
     inventoryFileData: cleanState.inventory || { products: [] },
     productOverrides: cleanState.productOverrides || {},
@@ -480,7 +509,14 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
     productOverrides: remoteState.productOverrides || remoteState.productEdits || {},
     deletedItems: remoteState.deletedItems || [],
     skuAliases: remoteState.skuAliases || {},
-    sales: remoteState.sales || remoteState.importedSalesFileData || { sessions: [], activeSessionId: null },
+    uploads: remoteState.uploads || {
+      sales: remoteState.uploadedSalesData || null,
+      inventory: remoteState.uploadedInventoryData || null,
+    },
+    sales: remoteState.sales || remoteState.importedSalesFileData || {
+      sessions: remoteState.salesData || [],
+      activeSessionId: remoteState.activeSessionId || remoteState.salesData?.[0]?.id || null,
+    },
     processing: remoteState.processing || {
       matched: [],
       unmatched: [],
@@ -502,6 +538,16 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
       base,
     ),
   };
+  if (base.uploads?.sales?.parsedRows?.length && !base.sales.sessions.length) {
+    const restoredSession = {
+      id: base.uploads.sales.sessionId || datasetId(base.uploads.sales.fileName || "restored-sales", base.uploads.sales.parsedRows.length, Date.now()),
+      fileName: base.uploads.sales.fileName || "Restored sales data",
+      timestamp: base.uploads.sales.importedAt || new Date().toISOString(),
+      rows: base.uploads.sales.parsedRows.length,
+      salesRows: base.uploads.sales.parsedRows,
+    };
+    base.sales = { sessions: [restoredSession], activeSessionId: restoredSession.id };
+  }
   return base;
 }
 
@@ -580,7 +626,7 @@ async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
     storeRegistry.stores = mergedStores;
-    if (defaultStore && storeRegistry.stores.includes(defaultStore)) {
+    if (!currentStoreNumber && defaultStore && storeRegistry.stores.includes(defaultStore)) {
       currentStoreNumber = defaultStore;
     } else if (!storeRegistry.stores.includes(currentStoreNumber)) {
       currentStoreNumber = "";
@@ -635,7 +681,8 @@ async function switchStore(storeNumber) {
   storeRegistry.currentStore = nextStore;
   if (nextStore && !storeRegistry.stores.includes(nextStore)) storeRegistry.stores.push(nextStore);
   saveStoreRegistry();
-  state = loadState(currentStoreNumber);
+  state = defaultState();
+  state.storeNumber = currentStoreNumber;
   editingProductId = null;
   render();
   isSwitchingStore = false;
@@ -678,16 +725,26 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     if (storeNumber !== currentStoreNumber) return;
     if (remoteState) {
       state = hydrateStateFromRemote(remoteState, storeNumber);
+      refreshProcessingFromActiveSales();
       localStorage.setItem(storageKeyForStore(storeNumber), JSON.stringify(state));
       render();
       setSyncStatus("Synced to Supabase");
-      setStatus(`Store ${storeNumber} loaded from Supabase.`);
+      setStatus(`Loaded Store ${storeNumber} from Supabase`);
       return;
     }
-    if (createIfMissing) await createSupabaseStoreIfMissing(storeNumber);
-    await syncCurrentStoreToSupabase();
+    state = defaultState();
+    state.storeNumber = storeNumber;
+    saveLocalBackup();
+    render();
+    if (createIfMissing) {
+      await createSupabaseStoreIfMissing(storeNumber);
+    } else {
+      setStatus(`Store ${storeNumber} has no Supabase data yet. Starting with a blank store state.`);
+    }
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
+      state = loadState(storeNumber);
+      render();
       setSyncStatus("Supabase save failed");
       showSupabaseError(error);
     }
@@ -704,9 +761,18 @@ async function handleInventoryFile(file) {
       ...state.inventory.products,
       ...imported,
     ]);
+    state.uploads.inventory = {
+      fileName: file.name,
+      importedAt: new Date().toISOString(),
+      rowCount: imported.length,
+      rawRows: rows,
+      parsedRows: imported,
+    };
     recalculateRecommendations();
-    saveState();
-    setStatus(`Loaded ${imported.length} inventory products from ${file.name}.`);
+    const synced = await saveStateNowToSupabase({ successMessage: "Inventory file saved to Supabase", silent: true });
+    setStatus(synced
+      ? `Loaded ${imported.length} inventory products from ${file.name}. Saved to Supabase for Store ${currentStoreNumber}.`
+      : `Loaded ${imported.length} inventory products from ${file.name}. Saved locally; select a store or retry Supabase sync to share it.`);
     showToast("Inventory file loaded.");
     activateTab("inventory");
   } catch (error) {
@@ -730,11 +796,21 @@ async function handleSalesFile(file) {
       rows: parsedSales.rows.length,
       salesRows: parsedSales.rows,
     };
+    state.uploads.sales = {
+      fileName: file.name,
+      sessionId: session.id,
+      importedAt: session.timestamp,
+      rowCount: parsedSales.rows.length,
+      rawRows: rows,
+      parsedRows: parsedSales.rows,
+    };
     state.sales.activeSessionId = session.id;
     state.sales.sessions = [session, ...state.sales.sessions.filter(item => item.id !== session.id)].slice(0, 20);
     processSalesRows(parsedSales.rows);
-    saveState();
-    setStatus(`Loaded ${parsedSales.rows.length} sales rows from ${file.name}.`);
+    const synced = await saveStateNowToSupabase({ successMessage: "Sales file saved to Supabase", silent: true });
+    setStatus(synced
+      ? `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved to Supabase for Store ${currentStoreNumber}.`
+      : `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved locally; select a store or retry Supabase sync to share it.`);
     showToast("Sales file loaded.");
     activateTab("ordering");
   } catch (error) {
