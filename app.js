@@ -813,8 +813,6 @@ async function subscribeToCurrentStore(storeNumber) {
     });
 }
 
-const subscribeToStore = subscribeToCurrentStore;
-
 async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
   try {
     const remoteStores = await loadSupabaseStores();
@@ -886,7 +884,7 @@ async function switchStore(storeNumber) {
   editingProductId = null;
   render();
   isSwitchingStore = false;
-  if (!nextStore) await subscribeToStore("");
+  if (!nextStore) await subscribeToCurrentStore("");
   await loadSelectedStoreFromSupabase();
 }
 
@@ -932,7 +930,7 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
       render();
       setSyncStatus(`Store ${storeNumber} loaded from Supabase`);
       setStatus(`Store ${storeNumber} loaded from Supabase`);
-      await subscribeToStore(storeNumber);
+      await subscribeToCurrentStore(storeNumber);
       return;
     }
     state = defaultState();
@@ -941,10 +939,10 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     render();
     if (createIfMissing) {
       await createSupabaseStoreIfMissing(storeNumber);
-      await subscribeToStore(storeNumber);
+      await subscribeToCurrentStore(storeNumber);
     } else {
       setStatus(`Store ${storeNumber} has no Supabase data yet. Starting with a blank store state.`);
-      await subscribeToStore(storeNumber);
+      await subscribeToCurrentStore(storeNumber);
     }
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
@@ -1968,6 +1966,12 @@ function normalizeUpc(value) {
 
 function cleanText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+// Legacy safety shim for older cached app shells that may still call the old
+// realtime helper name before the latest script fully replaces their cache.
+async function subscribeToStore(storeNumber) {
+  return subscribeToCurrentStore(storeNumber);
 }
 
 function parseWholeNumber(value) {
