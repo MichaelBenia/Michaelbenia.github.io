@@ -83,6 +83,9 @@ const dom = {
   saleOnlyToggle: document.getElementById("saleOnlyToggle"),
   settingsExportInventoryButton: document.getElementById("settingsExportInventoryButton"),
   settingsExportOrdersButton: document.getElementById("settingsExportOrdersButton"),
+  historyModal: document.getElementById("historyModal"),
+  historyModalBody: document.getElementById("historyModalBody"),
+  closeHistoryModalButton: document.getElementById("closeHistoryModalButton"),
 };
 
 let storeRegistry = loadStoreRegistry();
@@ -95,7 +98,6 @@ let syncStatus = "Local backup saved";
 let isSwitchingStore = false;
 let supabaseClientPromise = null;
 let currentStoreChannel = null;
-let lastLocalSaveAt = 0;
 
 bindEvents();
 render();
@@ -120,6 +122,7 @@ function defaultState() {
       deductions: [],
       recommendations: [],
     },
+    inventoryHistory: [],
     settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false },
     lastSaved: null,
   };
@@ -243,6 +246,71 @@ async function saveSupabaseStoreState(storeNumber, appState) {
   if (error) throw error;
   await upsertSupabaseStore(storeNumber);
   return { data, appState: payload };
+}
+
+async function insertSupabaseInventoryHistory(entry) {
+  const storeNumber = selectedSupabaseStoreNumber();
+  if (!storeNumber) return;
+  try {
+    const supabase = await getSupabaseClient();
+    const { error } = await supabase
+      .from("inventory_adjustment_history")
+      .insert({
+        store_number: storeNumber,
+        product_id: entry.productId,
+        product_name: entry.productName,
+        change_amount: entry.changeAmount,
+        created_at: entry.createdAt,
+        user_name: entry.userName || null,
+        source: entry.source || "manual_adjustment",
+      });
+    if (error) throw error;
+  } catch (error) {
+    console.error("Inventory history insert failed:", error);
+  }
+}
+
+async function loadSupabaseInventoryHistory(productId) {
+  const storeNumber = selectedSupabaseStoreNumber();
+  if (!storeNumber) return;
+  const cutoff = new Date(Date.now() - (14 * 24 * 60 * 60 * 1000)).toISOString();
+  try {
+    const supabase = await getSupabaseClient();
+    const { data, error } = await supabase
+      .from("inventory_adjustment_history")
+      .select("product_id, product_name, change_amount, created_at, user_name, source")
+      .eq("store_number", storeNumber)
+      .eq("product_id", productId)
+      .gte("created_at", cutoff)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const remoteEntries = (data || []).map(row => ({
+      id: `${row.product_id}-${row.created_at}-${row.change_amount}`,
+      storeNumber,
+      productId: row.product_id,
+      productName: row.product_name,
+      changeAmount: row.change_amount,
+      createdAt: row.created_at,
+      userName: row.user_name || "",
+      source: row.source || "manual_adjustment",
+    }));
+    mergeInventoryHistory(remoteEntries);
+  } catch (error) {
+    console.error("Inventory history load failed:", error);
+  }
+}
+
+function mergeInventoryHistory(entries) {
+  const byKey = new Map((state.inventoryHistory || []).map(entry => [
+    `${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.source || ""}`,
+    entry,
+  ]));
+  for (const entry of entries) {
+    byKey.set(`${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.source || ""}`, entry);
+  }
+  state.inventoryHistory = [...byKey.values()]
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, 5000);
 }
 
 async function createSupabaseStoreIfMissing(storeNumber) {
@@ -382,6 +450,7 @@ function loadState(storeNumber = currentStoreNumber || "") {
         deductions: parsed.processing?.deductions || [],
         recommendations: parsed.processing?.recommendations || [],
       },
+      inventoryHistory: parsed.inventoryHistory || parsed.inventoryAdjustmentHistory || [],
       settings: {
         targetWeeks: Number(parsed.settings?.targetWeeks) || DEFAULT_TARGET_WEEKS,
         showSaleOnly: parsed.settings?.showSaleOnly === true,
@@ -459,7 +528,6 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
   try {
     setSyncStatus(`Saving Store ${storeNumber} to Supabase…`);
     const appState = serializeStateForSupabase();
-    lastLocalSaveAt = Date.now();
     console.log("Saving to Supabase store:", storeNumber, appState);
     const result = await saveSupabaseStoreState(storeNumber, appState);
     if (storeNumber === currentStoreNumber) {
@@ -526,6 +594,8 @@ function serializeStateForSupabase() {
     editedSkus: Object.fromEntries(Object.entries(cleanState.productOverrides || {}).map(([sourceSku, override]) => [sourceSku, override?.sku || sourceSku])),
     editedDescriptions: Object.fromEntries(Object.entries(cleanState.productOverrides || {}).map(([sourceSku, override]) => [sourceSku, override?.description || ""])),
     orderRecommendations: cleanState.processing?.recommendations || [],
+    inventoryHistory: cleanState.inventoryHistory || [],
+    inventoryAdjustmentHistory: cleanState.inventoryHistory || [],
     categoryState: cleanState.categoryState || {},
     settings: cleanState.settings || {},
     clientLastSaved: cleanState.lastSaved || null,
@@ -556,6 +626,7 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
       deductions: [],
       recommendations: remoteState.orderRecommendations || [],
     },
+    inventoryHistory: remoteState.inventoryHistory || remoteState.inventoryAdjustmentHistory || [],
     settings: {
       ...defaultState().settings,
       ...(remoteState.settings || {}),
@@ -606,6 +677,10 @@ function bindEvents() {
   dom.restoreDeletedItemsButton.addEventListener("click", restoreDeletedInventoryItems);
   dom.clearAllButton.addEventListener("click", clearAllLocalData);
   dom.clearAppCacheButton.addEventListener("click", clearAppCache);
+  dom.closeHistoryModalButton.addEventListener("click", closeInventoryHistory);
+  dom.historyModal.addEventListener("click", event => {
+    if (event.target === dom.historyModal) closeInventoryHistory();
+  });
   dom.settingsExportInventoryButton.addEventListener("click", exportInventoryCsv);
   dom.settingsExportOrdersButton.addEventListener("click", exportOrdersCsv);
   dom.targetWeeksInput.addEventListener("change", () => {
@@ -681,8 +756,8 @@ function applyAppState(incomingState, storeNumber = currentStoreNumber) {
   refreshProcessingFromActiveSales();
 }
 
-function isIncomingStateNewer(incomingState) {
-  const incomingTime = Date.parse(incomingState?.updatedAt || incomingState?.lastUpdated || incomingState?.clientLastSaved || "");
+function isIncomingStateNewer(incomingState, remoteUpdatedAt = null) {
+  const incomingTime = Date.parse(remoteUpdatedAt || incomingState?.updatedAt || incomingState?.lastUpdated || incomingState?.clientLastSaved || "");
   const localTimes = [state?.updatedAt, state?.lastUpdated, state?.lastSaved]
     .map(value => Date.parse(value || ""))
     .filter(Number.isFinite);
@@ -692,7 +767,7 @@ function isIncomingStateNewer(incomingState) {
   return incomingTime > localTime;
 }
 
-async function subscribeToStore(storeNumber) {
+async function subscribeToCurrentStore(storeNumber) {
   const normalizedStore = cleanText(storeNumber);
   const supabase = await getSupabaseClient();
   if (currentStoreChannel) {
@@ -703,11 +778,11 @@ async function subscribeToStore(storeNumber) {
 
   console.log("Subscribing to Supabase realtime store:", normalizedStore);
   currentStoreChannel = supabase
-    .channel(`store-${normalizedStore}`)
+    .channel(`store-sync-${normalizedStore}`)
     .on(
       "postgres_changes",
       {
-        event: "*",
+        event: "UPDATE",
         schema: "public",
         table: "store_app_state",
         filter: `store_number=eq.${normalizedStore}`,
@@ -715,9 +790,9 @@ async function subscribeToStore(storeNumber) {
       payload => {
         console.log("Realtime store update received:", payload);
         const incomingState = payload.new?.app_state;
+        const remoteUpdatedAt = payload.new?.updated_at || incomingState?.updatedAt;
         if (!incomingState) return;
-        if (Date.now() - lastLocalSaveAt < 1000) return;
-        if (!isIncomingStateNewer(incomingState)) return;
+        if (!isIncomingStateNewer(incomingState, remoteUpdatedAt)) return;
         applyAppState(incomingState, normalizedStore);
         saveLocalCache(normalizedStore, state);
         renderAll();
@@ -726,13 +801,19 @@ async function subscribeToStore(storeNumber) {
       },
     )
     .subscribe(status => {
+      console.log("Realtime status:", status);
       console.log("Supabase realtime status:", status);
-      if (status === "SUBSCRIBED") setSyncStatus("Listening for live updates");
+      if (status === "SUBSCRIBED") {
+        setSyncStatus("Listening for live updates");
+        setStatus("Listening for live store updates");
+      }
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         setSyncStatus("Supabase offline, using local backup");
       }
     });
 }
+
+const subscribeToStore = subscribeToCurrentStore;
 
 async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
   try {
@@ -1224,19 +1305,19 @@ function renderInventoryTable() {
   const unknownProducts = filteredProducts.filter(product => !productCategoryInfo(product));
 
   let html = `<table><thead><tr>
-    <th>JDE/UPC</th><th>Description</th><th class="center-cell">Front</th>
+    <th class="center-cell">Info</th><th>JDE/UPC</th><th>Description</th><th class="center-cell">Front</th>
     <th class="center-cell">Backstock</th><th>Notes</th><th class="center-cell">Sale</th><th class="center-cell">Actions</th>
   </tr></thead><tbody>`;
   for (const section of CATEGORY_CONFIG) {
     const products = visibleProducts.filter(product => productCategoryInfo(product)?.name === section.name);
     if (!products.length) continue;
-    html += `<tr class="category-row"><td colspan="7">${escapeHtml(section.name)}</td></tr>`;
+    html += `<tr class="category-row"><td colspan="8">${escapeHtml(section.name)}</td></tr>`;
     for (const product of products) {
       html += inventoryRowHtml(product);
     }
   }
   if (unknownProducts.length) {
-    html += `<tr class="category-row"><td colspan="7">Unmatched Products</td></tr>`;
+    html += `<tr class="category-row"><td colspan="8">Unmatched Products</td></tr>`;
     for (const product of unknownProducts) {
       html += inventoryRowHtml(product);
     }
@@ -1250,6 +1331,7 @@ function inventoryRowHtml(product) {
   const rowTitle = product.onSale ? "This item is currently marked as on sale." : "";
   if (isEditing) {
     return `<tr class="${product.onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(product.id)}" title="${rowTitle}">
+      <td class="center-cell">${historyButton(product)}</td>
       <td><input class="edit-input sku-edit-input" data-edit-field="sku" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.id)}" /></td>
       <td><input class="edit-input description-edit-input" data-edit-field="description" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.name)}" /></td>
       <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
@@ -1264,6 +1346,7 @@ function inventoryRowHtml(product) {
   }
 
   return `<tr class="${product.onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(product.id)}" title="${rowTitle}">
+    <td class="center-cell">${historyButton(product)}</td>
     <td>${escapeHtml(product.id)}</td>
     <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
     <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
@@ -1365,9 +1448,16 @@ function handleInventoryClick(event) {
     deleteInventoryItem(product);
     return;
   }
+  if (button.dataset.action === "showHistory") {
+    openInventoryHistory(product);
+    return;
+  }
   const field = button.dataset.field;
   const delta = Number(button.dataset.delta);
-  product[field] = Math.max(0, Number(product[field] || 0) + delta);
+  const previousValue = Number(product[field] || 0);
+  const nextValue = Math.max(0, previousValue + delta);
+  product[field] = nextValue;
+  recordInventoryAdjustment(product, nextValue - previousValue, historySourceForField(field));
   product.lastUpdated = new Date().toISOString();
   recalculateRecommendations();
   scheduleSave();
@@ -1381,7 +1471,10 @@ function handleInventoryChange(event) {
   const product = getProduct(id);
   if (!product) return;
   if (field === "quantity" || field === "backstock") {
-    product[field] = Math.max(0, parseWholeNumber(input.value));
+    const previousValue = Number(product[field] || 0);
+    const nextValue = Math.max(0, parseWholeNumber(input.value));
+    product[field] = nextValue;
+    recordInventoryAdjustment(product, nextValue - previousValue, historySourceForField(field));
   } else if (field === "onSale") {
     product.onSale = input.checked;
   } else {
@@ -1496,6 +1589,85 @@ function moveProcessingSku(oldSku, newSku) {
   }
 }
 
+function historyButton(product) {
+  return `<button class="info-icon-button" data-action="showHistory" data-id="${escapeHtml(product.id)}" title="Inventory history" aria-label="Inventory history for ${escapeHtml(product.name)}">i</button>`;
+}
+
+function historySourceForField(field) {
+  if (field === "quantity") return "manual_front_adjustment";
+  if (field === "backstock") return "manual_backstock_adjustment";
+  return "manual_adjustment";
+}
+
+function recordInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
+  const amount = Math.trunc(Number(changeAmount || 0));
+  if (!product || amount === 0) return;
+  const entry = {
+    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    storeNumber: currentStoreNumber || "",
+    productId: product.id,
+    productName: product.name || "Unnamed product",
+    changeAmount: amount,
+    createdAt: new Date().toISOString(),
+    userName: "",
+    source,
+  };
+  state.inventoryHistory = [entry, ...(state.inventoryHistory || [])].slice(0, 5000);
+  insertSupabaseInventoryHistory(entry);
+}
+
+function historyEntriesForProduct(productId) {
+  const id = normalizeUpc(productId);
+  const cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000);
+  return (state.inventoryHistory || [])
+    .filter(entry => normalizeUpc(entry.productId) === id)
+    .filter(entry => Date.parse(entry.createdAt) >= cutoff);
+}
+
+function groupedHistoryForProduct(productId) {
+  const groups = new Map();
+  for (const entry of historyEntriesForProduct(productId)) {
+    const created = new Date(entry.createdAt);
+    if (Number.isNaN(created.getTime())) continue;
+    const direction = Number(entry.changeAmount || 0) >= 0 ? "added" : "removed";
+    const dateKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+    const key = `${normalizeUpc(entry.productId)}:${dateKey}:${direction}`;
+    const existing = groups.get(key) || {
+      direction,
+      total: 0,
+      latestAt: entry.createdAt,
+    };
+    existing.total += Math.abs(Number(entry.changeAmount || 0));
+    if (Date.parse(entry.createdAt) > Date.parse(existing.latestAt)) {
+      existing.latestAt = entry.createdAt;
+    }
+    groups.set(key, existing);
+  }
+  return [...groups.values()]
+    .sort((a, b) => Date.parse(b.latestAt) - Date.parse(a.latestAt));
+}
+
+async function openInventoryHistory(product) {
+  await loadSupabaseInventoryHistory(product.id);
+  const groups = groupedHistoryForProduct(product.id);
+  const listHtml = groups.length
+    ? `<ul class="history-list">${groups.map(group => `
+        <li><strong>${formatNumber(group.total)}</strong> ${group.direction} on ${formatHistoryDateTime(group.latestAt)}</li>
+      `).join("")}</ul>`
+    : `<div class="empty-state">No inventory changes recorded in the last 14 days.</div>`;
+  dom.historyModalBody.innerHTML = `
+    <div class="history-product-name">${escapeHtml(product.name || "Unnamed product")}</div>
+    <div class="small-muted">SKU ${escapeHtml(product.id)}</div>
+    ${listHtml}
+  `;
+  dom.historyModal.hidden = false;
+}
+
+function closeInventoryHistory() {
+  dom.historyModal.hidden = true;
+  dom.historyModalBody.innerHTML = "";
+}
+
 function refreshProcessingFromActiveSales() {
   const active = state.sales.sessions.find(session => session.id === state.sales.activeSessionId);
   if (active?.salesRows?.length) {
@@ -1543,6 +1715,7 @@ function applySalesDeduction() {
     const units = Math.max(0, Math.ceil(row.unitsSold || 0));
     const deducted = Math.min(before, units);
     product.quantity = Math.max(0, before - units);
+    recordInventoryAdjustment(product, product.quantity - before, "sales_deduction_front");
     product.lastUpdated = new Date().toISOString();
     deductedUnits += deducted;
     if (units > before) shortageRows += 1;
@@ -1573,6 +1746,8 @@ function clearSalesData() {
 function clearInventoryCounts() {
   if (!confirm("Clear all inventory count data? Product names and order lineup will remain.")) return;
   for (const product of state.inventory.products) {
+    recordInventoryAdjustment(product, -Number(product.quantity || 0), "clear_front_count");
+    recordInventoryAdjustment(product, -Number(product.backstock || 0), "clear_backstock_count");
     product.quantity = 0;
     product.backstock = 0;
     product.lastUpdated = new Date().toISOString();
@@ -1887,6 +2062,16 @@ function formatDateTime(value) {
     month: "short",
     day: "numeric",
     hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatHistoryDateTime(value) {
+  return new Date(value).toLocaleString([], {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
     minute: "2-digit",
   });
 }

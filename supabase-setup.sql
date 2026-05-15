@@ -15,8 +15,21 @@ create table if not exists stores (
   updated_at timestamptz default now()
 );
 
+create table if not exists inventory_adjustment_history (
+  id uuid primary key default gen_random_uuid(),
+  store_number text not null,
+  product_id text not null,
+  product_name text not null,
+  change_amount integer not null,
+  created_at timestamptz not null default now(),
+  user_id uuid null,
+  user_name text null,
+  source text null default 'manual_adjustment'
+);
+
 alter table store_app_state enable row level security;
 alter table stores enable row level security;
+alter table inventory_adjustment_history enable row level security;
 
 create policy "Allow public read"
 on store_app_state
@@ -49,6 +62,19 @@ on stores
 for update
 using (true)
 with check (true);
+
+create policy "Allow public inventory history read"
+on inventory_adjustment_history
+for select
+using (true);
+
+create policy "Allow public inventory history insert"
+on inventory_adjustment_history
+for insert
+with check (true);
+
+create index if not exists inventory_adjustment_history_store_product_created_idx
+on inventory_adjustment_history (store_number, product_id, created_at desc);
 
 -- Enable Realtime for cross-device live updates.
 -- If this table is already in the publication, Supabase/Postgres may report

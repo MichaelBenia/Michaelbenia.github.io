@@ -185,6 +185,18 @@
     </div>
 
     <div id="toast" class="toast" aria-live="polite"></div>
+    <div id="historyModal" class="modal-backdrop" hidden>
+      <section class="history-modal" role="dialog" aria-modal="true" aria-labelledby="historyModalTitle">
+        <div class="modal-header">
+          <div>
+            <h2 id="historyModalTitle">Inventory History</h2>
+            <p class="small-muted">Last 14 days</p>
+          </div>
+          <button id="closeHistoryModalButton" class="icon-action" aria-label="Close inventory history">&times;</button>
+        </div>
+        <div id="historyModalBody" class="history-modal-body"></div>
+      </section>
+    </div>
 
     <script src="xlsx.full.min.js"></script>
     <script>
