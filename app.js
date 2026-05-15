@@ -260,6 +260,7 @@ async function insertSupabaseInventoryHistory(entry) {
         product_id: entry.productId,
         product_name: entry.productName,
         change_amount: entry.changeAmount,
+        quantity_type: entry.quantityType || "unit",
         created_at: entry.createdAt,
         user_name: entry.userName || null,
         source: entry.source || "manual_adjustment",
@@ -278,18 +279,19 @@ async function loadSupabaseInventoryHistory(productId) {
     const supabase = await getSupabaseClient();
     const { data, error } = await supabase
       .from("inventory_adjustment_history")
-      .select("product_id, product_name, change_amount, created_at, user_name, source")
+      .select("product_id, product_name, change_amount, quantity_type, created_at, user_name, source")
       .eq("store_number", storeNumber)
       .eq("product_id", productId)
       .gte("created_at", cutoff)
       .order("created_at", { ascending: false });
     if (error) throw error;
     const remoteEntries = (data || []).map(row => ({
-      id: `${row.product_id}-${row.created_at}-${row.change_amount}`,
+      id: `${row.product_id}-${row.created_at}-${row.change_amount}-${row.quantity_type || "unit"}`,
       storeNumber,
       productId: row.product_id,
       productName: row.product_name,
       changeAmount: row.change_amount,
+      quantityType: row.quantity_type || "unit",
       createdAt: row.created_at,
       userName: row.user_name || "",
       source: row.source || "manual_adjustment",
@@ -302,11 +304,11 @@ async function loadSupabaseInventoryHistory(productId) {
 
 function mergeInventoryHistory(entries) {
   const byKey = new Map((state.inventoryHistory || []).map(entry => [
-    `${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.source || ""}`,
+    `${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.quantityType || "unit"}|${entry.source || ""}`,
     entry,
   ]));
   for (const entry of entries) {
-    byKey.set(`${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.source || ""}`, entry);
+    byKey.set(`${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.quantityType || "unit"}|${entry.source || ""}`, entry);
   }
   state.inventoryHistory = [...byKey.values()]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
@@ -1455,14 +1457,14 @@ async function updateInventoryProduct(product, updates, { historySource = "manua
     const nextQuantity = Math.max(0, parseWholeNumber(updates.quantity));
     product.quantity = nextQuantity;
     const delta = nextQuantity - previousValues.quantity;
-    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, historySource));
+    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, "unit", historySource));
   }
 
   if (Object.hasOwn(updates, "backstock")) {
     const nextBackstock = Math.max(0, parseWholeNumber(updates.backstock));
     product.backstock = nextBackstock;
     const delta = nextBackstock - previousValues.backstock;
-    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, historySource));
+    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, "case", historySource));
   }
 
   if (Object.hasOwn(updates, "onSale")) {
@@ -1660,18 +1662,28 @@ function historySourceForField(field) {
   return "manual_adjustment";
 }
 
-function createInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
+function historyQuantityTypeForSource(source = "") {
+  const text = String(source);
+  if (text.includes("backstock") || text.includes("case")) return "case";
+  return "unit";
+}
+
+function createInventoryAdjustment(product, changeAmount, quantityTypeOrSource = "unit", source = "manual_adjustment") {
   const amount = Math.trunc(Number(changeAmount || 0));
   if (!product || amount === 0) return null;
+  const knownQuantityType = quantityTypeOrSource === "case" || quantityTypeOrSource === "unit";
+  const quantityType = knownQuantityType ? quantityTypeOrSource : historyQuantityTypeForSource(quantityTypeOrSource);
+  const resolvedSource = knownQuantityType ? source : quantityTypeOrSource;
   return {
     id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     storeNumber: currentStoreNumber || "",
     productId: product.id,
     productName: product.name || "Unnamed product",
     changeAmount: amount,
+    quantityType,
     createdAt: new Date().toISOString(),
     userName: "",
-    source,
+    source: resolvedSource,
   };
 }
 
@@ -1682,7 +1694,7 @@ function commitInventoryAdjustment(entry) {
 }
 
 function recordInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
-  commitInventoryAdjustment(createInventoryAdjustment(product, changeAmount, source));
+  commitInventoryAdjustment(createInventoryAdjustment(product, changeAmount, historyQuantityTypeForSource(source), source));
 }
 
 function historyEntriesForProduct(productId) {
@@ -1699,10 +1711,12 @@ function groupedHistoryForProduct(productId) {
     const created = new Date(entry.createdAt);
     if (Number.isNaN(created.getTime())) continue;
     const direction = Number(entry.changeAmount || 0) >= 0 ? "added" : "removed";
+    const quantityType = entry.quantityType === "case" ? "case" : "unit";
     const dateKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
-    const key = `${normalizeUpc(entry.productId)}:${dateKey}:${direction}`;
+    const key = `${normalizeUpc(entry.productId)}:${dateKey}:${direction}:${quantityType}`;
     const existing = groups.get(key) || {
       direction,
+      quantityType,
       total: 0,
       latestAt: entry.createdAt,
     };
@@ -1721,7 +1735,7 @@ async function openInventoryHistory(product) {
   const groups = groupedHistoryForProduct(product.id);
   const listHtml = groups.length
     ? `<ul class="history-list">${groups.map(group => `
-        <li><strong>${formatNumber(group.total)}</strong> ${group.direction} on ${formatHistoryDateTime(group.latestAt)}</li>
+        <li><strong>${formatNumber(group.total)}</strong> ${historyQuantityLabel(group.quantityType, group.total)} ${group.direction} on ${formatHistoryDateTime(group.latestAt)}</li>
       `).join("")}</ul>`
     : `<div class="empty-state">No inventory changes recorded in the last 14 days.</div>`;
   dom.historyModalBody.innerHTML = `
@@ -2149,6 +2163,11 @@ function formatHistoryDateTime(value) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function historyQuantityLabel(quantityType, amount) {
+  const singular = quantityType === "case" ? "case" : "unit";
+  return Number(amount) === 1 ? singular : `${singular}s`;
 }
 
 function fileTimestamp() {

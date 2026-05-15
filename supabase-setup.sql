@@ -21,11 +21,15 @@ create table if not exists inventory_adjustment_history (
   product_id text not null,
   product_name text not null,
   change_amount integer not null,
+  quantity_type text not null default 'unit',
   created_at timestamptz not null default now(),
   user_id uuid null,
   user_name text null,
   source text null default 'manual_adjustment'
 );
+
+alter table inventory_adjustment_history
+add column if not exists quantity_type text not null default 'unit';
 
 alter table store_app_state enable row level security;
 alter table stores enable row level security;

@@ -69,7 +69,7 @@ When a store is selected, the app subscribes to Supabase Realtime updates for th
 
 If a device seems stuck on old JavaScript, use **Settings > Clear App Cache**. The service worker bypasses Supabase requests and uses network-first loading for `index.html`, `styles.css`, and `app.js`.
 
-Inventory count changes are also recorded in `inventory_adjustment_history` and shown from each product row's small circular **i** button. The popup groups additions and removals from the last 14 days by product, date, and direction.
+Inventory count changes are also recorded in `inventory_adjustment_history` and shown from each product row's small circular **i** button. The popup groups additions and removals from the last 14 days by product, date, direction, and quantity type, so Front units and Backstock cases stay separate.
 
 ### Supabase Setup SQL
 
