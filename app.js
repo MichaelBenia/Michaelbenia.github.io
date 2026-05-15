@@ -507,6 +507,24 @@ async function saveStateNowToSupabase({ successMessage = "Project saved to Supab
   }
 }
 
+async function saveInventoryMutationToSupabase({ silent = false } = {}) {
+  saveLocalBackup();
+  if (!selectedSupabaseStoreNumber()) {
+    setSyncStatus("Local backup saved");
+    if (!silent) showToast("Select or add a store number before saving inventory.");
+    return false;
+  }
+  try {
+    await syncCurrentStoreToSupabase({ throwOnError: true, silent: true });
+    return true;
+  } catch (error) {
+    setSyncStatus("Supabase failed, using local backup");
+    showSupabaseError(error);
+    if (!silent) showToast("Inventory save failed. Changes are saved locally only.");
+    return false;
+  }
+}
+
 function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => saveState(), 250);
@@ -1423,6 +1441,60 @@ function renderUnmatched() {
   `).join("");
 }
 
+async function updateInventoryProduct(product, updates, { historySource = "manual_adjustment" } = {}) {
+  if (!product || !updates || typeof updates !== "object") return false;
+  const previousValues = {
+    quantity: Number(product.quantity || 0),
+    backstock: Number(product.backstock || 0),
+    onSale: product.onSale === true,
+    notes: product.notes || "",
+  };
+  const pendingHistory = [];
+
+  if (Object.hasOwn(updates, "quantity")) {
+    const nextQuantity = Math.max(0, parseWholeNumber(updates.quantity));
+    product.quantity = nextQuantity;
+    const delta = nextQuantity - previousValues.quantity;
+    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, historySource));
+  }
+
+  if (Object.hasOwn(updates, "backstock")) {
+    const nextBackstock = Math.max(0, parseWholeNumber(updates.backstock));
+    product.backstock = nextBackstock;
+    const delta = nextBackstock - previousValues.backstock;
+    if (delta !== 0) pendingHistory.push(createInventoryAdjustment(product, delta, historySource));
+  }
+
+  if (Object.hasOwn(updates, "onSale")) {
+    product.onSale = updates.onSale === true;
+  }
+
+  if (Object.hasOwn(updates, "notes")) {
+    product.notes = cleanText(updates.notes);
+  }
+
+  const changed = product.quantity !== previousValues.quantity
+    || product.backstock !== previousValues.backstock
+    || product.onSale !== previousValues.onSale
+    || product.notes !== previousValues.notes;
+  if (!changed) return false;
+
+  product.lastUpdated = new Date().toISOString();
+  recalculateRecommendations();
+  render();
+  const saved = await saveInventoryMutationToSupabase({ silent: true });
+  if (saved) {
+    for (const entry of pendingHistory) {
+      commitInventoryAdjustment(entry);
+    }
+    if (pendingHistory.length) {
+      saveLocalBackup();
+      scheduleSupabaseSave();
+    }
+  }
+  return saved;
+}
+
 function handleInventoryClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -1454,11 +1526,7 @@ function handleInventoryClick(event) {
   const delta = Number(button.dataset.delta);
   const previousValue = Number(product[field] || 0);
   const nextValue = Math.max(0, previousValue + delta);
-  product[field] = nextValue;
-  recordInventoryAdjustment(product, nextValue - previousValue, historySourceForField(field));
-  product.lastUpdated = new Date().toISOString();
-  recalculateRecommendations();
-  scheduleSave();
+  updateInventoryProduct(product, { [field]: nextValue }, { historySource: historySourceForField(field) });
 }
 
 function handleInventoryChange(event) {
@@ -1469,18 +1537,13 @@ function handleInventoryChange(event) {
   const product = getProduct(id);
   if (!product) return;
   if (field === "quantity" || field === "backstock") {
-    const previousValue = Number(product[field] || 0);
     const nextValue = Math.max(0, parseWholeNumber(input.value));
-    product[field] = nextValue;
-    recordInventoryAdjustment(product, nextValue - previousValue, historySourceForField(field));
+    updateInventoryProduct(product, { [field]: nextValue }, { historySource: historySourceForField(field) });
   } else if (field === "onSale") {
-    product.onSale = input.checked;
+    updateInventoryProduct(product, { onSale: input.checked });
   } else {
-    product[field] = input.value;
+    updateInventoryProduct(product, { [field]: input.value });
   }
-  product.lastUpdated = new Date().toISOString();
-  recalculateRecommendations();
-  scheduleSave();
 }
 
 function saveProductEdit(product) {
@@ -1597,10 +1660,10 @@ function historySourceForField(field) {
   return "manual_adjustment";
 }
 
-function recordInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
+function createInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
   const amount = Math.trunc(Number(changeAmount || 0));
-  if (!product || amount === 0) return;
-  const entry = {
+  if (!product || amount === 0) return null;
+  return {
     id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     storeNumber: currentStoreNumber || "",
     productId: product.id,
@@ -1610,8 +1673,16 @@ function recordInventoryAdjustment(product, changeAmount, source = "manual_adjus
     userName: "",
     source,
   };
+}
+
+function commitInventoryAdjustment(entry) {
+  if (!entry) return;
   state.inventoryHistory = [entry, ...(state.inventoryHistory || [])].slice(0, 5000);
   insertSupabaseInventoryHistory(entry);
+}
+
+function recordInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
+  commitInventoryAdjustment(createInventoryAdjustment(product, changeAmount, source));
 }
 
 function historyEntriesForProduct(productId) {
