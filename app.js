@@ -280,12 +280,44 @@ async function refreshGlobalSaleFlagsFromSupabase({ silent = false } = {}) {
     console.error("Global sale status load failed:", error);
     if (isMissingSupabaseTableError(error, "global_product_sale_status")) {
       globalSaleTableAvailable = false;
-      setStatus("Global sale status table is missing. Run supabase-setup.sql; using store-state fallback for now.", true);
+      await loadGlobalSaleFlagsFromStoreStates();
+      if (!silent) {
+        setStatus("Global sale status table is missing. Using synced store sale flags for now.", true);
+      }
+      applyGlobalSaleFlagsToState();
+      return true;
     } else if (!silent) {
       showSupabaseError(error);
     }
     return false;
   }
+}
+
+async function loadGlobalSaleFlagsFromStoreStates() {
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("store_app_state")
+    .select("app_state");
+  if (error) {
+    console.error("Failed to load fallback sale flags from store states:", error);
+    throw error;
+  }
+
+  const flags = {};
+  for (const row of data || []) {
+    for (const [key, value] of Object.entries(row.app_state?.saleFlags || {})) {
+      const normalizedKey = normalizeUpc(key);
+      if (normalizedKey && value === true) flags[normalizedKey] = true;
+    }
+    const products = row.app_state?.inventory?.products || row.app_state?.inventoryData?.products || [];
+    for (const product of products) {
+      if (product?.onSale !== true) continue;
+      const productId = saleStatusKey(product);
+      if (productId) flags[productId] = true;
+    }
+  }
+  globalSaleFlags = flags;
+  return flags;
 }
 
 async function seedGlobalSaleFlagsFromStoreStates() {
@@ -383,6 +415,13 @@ async function saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { sile
 
 async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new Date().toISOString()) {
   const supabase = await getSupabaseClient();
+  const { data: storeRows, error: storeError } = await supabase
+    .from("stores")
+    .select("store_number");
+  if (storeError) {
+    console.error("Failed to load stores for global sale update:", storeError);
+  }
+
   const { data, error } = await supabase
     .from("store_app_state")
     .select("store_number, app_state");
@@ -392,9 +431,15 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
   }
 
   const target = normalizeUpc(productId);
+  const appStateByStore = new Map((data || []).map(row => [cleanText(row.store_number), row.app_state || {}]));
+  for (const store of storeRows || []) {
+    const storeNumber = cleanText(store.store_number);
+    if (storeNumber && !appStateByStore.has(storeNumber)) {
+      appStateByStore.set(storeNumber, defaultStoreAppStateForSaleSync(storeNumber));
+    }
+  }
   const rowsToSave = [];
-  for (const row of data || []) {
-    const appState = row.app_state || {};
+  for (const [storeNumber, appState] of appStateByStore.entries()) {
     const products = appState.inventory?.products || appState.inventoryData?.products || appState.inventoryFileData?.products || [];
     let changed = false;
     for (const product of products) {
@@ -406,15 +451,20 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
       }
     }
     if (!appState.saleFlags) appState.saleFlags = {};
-    if (appState.saleFlags[target] !== (onSale === true)) {
-      appState.saleFlags[target] = onSale === true;
+    const currentFlag = appState.saleFlags[target] === true;
+    if (currentFlag !== (onSale === true)) {
+      if (onSale === true) {
+        appState.saleFlags[target] = true;
+      } else {
+        delete appState.saleFlags[target];
+      }
       changed = true;
     }
     if (changed) {
       appState.updatedAt = updatedAt;
       appState.lastUpdated = updatedAt;
       rowsToSave.push({
-        store_number: cleanText(row.store_number),
+        store_number: storeNumber,
         app_state: appState,
         updated_at: updatedAt,
       });
@@ -430,6 +480,7 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
     console.error("Failed to save global sale fallback store states:", upsertError);
     throw upsertError;
   }
+  globalSaleFlags[target] = onSale === true;
 }
 
 async function clearGlobalSaleFlags() {
@@ -506,14 +557,28 @@ async function clearGlobalSaleFlags() {
 
 async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOString()) {
   const supabase = await getSupabaseClient();
+  const { data: storeRows, error: storeError } = await supabase
+    .from("stores")
+    .select("store_number");
+  if (storeError) {
+    console.error("Failed to load stores for Clear All Sales:", storeError);
+  }
+
   const { data, error } = await supabase
     .from("store_app_state")
     .select("store_number, app_state");
   if (error) throw error;
 
+  const appStateByStore = new Map((data || []).map(row => [cleanText(row.store_number), row.app_state || {}]));
+  for (const store of storeRows || []) {
+    const storeNumber = cleanText(store.store_number);
+    if (storeNumber && !appStateByStore.has(storeNumber)) {
+      appStateByStore.set(storeNumber, defaultStoreAppStateForSaleSync(storeNumber));
+    }
+  }
+
   const rowsToSave = [];
-  for (const row of data || []) {
-    const appState = row.app_state || {};
+  for (const [storeNumber, appState] of appStateByStore.entries()) {
     const products = appState.inventory?.products || appState.inventoryData?.products || appState.inventoryFileData?.products || [];
     for (const product of products) {
       setProductSaleFields(product, onSale === true);
@@ -524,7 +589,7 @@ async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOStri
     appState.updatedAt = updatedAt;
     appState.lastUpdated = updatedAt;
     rowsToSave.push({
-      store_number: cleanText(row.store_number),
+      store_number: storeNumber,
       app_state: appState,
       updated_at: updatedAt,
     });
@@ -535,6 +600,19 @@ async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOStri
     .upsert(rowsToSave);
   console.log("Clear all sales result:", { table: "store_app_state", rows: rowsToSave.length, error: upsertError });
   if (upsertError) throw upsertError;
+  if (!onSale) globalSaleFlags = {};
+}
+
+function defaultStoreAppStateForSaleSync(storeNumber) {
+  const appState = {
+    ...defaultState(),
+    storeNumber,
+    lastSaved: null,
+    updatedAt: null,
+    lastUpdated: null,
+  };
+  appState.inventory = { products: catalogProducts(appState) };
+  return appState;
 }
 
 async function saveSupabaseStoreState(storeNumber, appState) {
@@ -1143,6 +1221,7 @@ async function initializeSupabaseSync() {
       render();
       return;
     }
+    await refreshGlobalSaleFlagsFromSupabase({ silent: true });
     if (selectedSupabaseStoreNumber()) {
       await loadSelectedStoreFromSupabase();
     } else {
@@ -1421,6 +1500,7 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     console.log("Selected store:", storeNumber);
     console.log("Loading inventory for store:", storeNumber);
     setSyncStatus(`Loading Store ${storeNumber} from Supabase…`);
+    await refreshGlobalSaleFlagsFromSupabase({ silent: true });
     const remoteState = await withTimeout(getSupabaseStoreState(storeNumber), 10000, "Inventory loading timed out");
     console.log("Loaded from Supabase store:", storeNumber, remoteState);
     if (storeNumber !== currentStoreNumber) return;
