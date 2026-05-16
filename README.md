@@ -28,7 +28,7 @@ Saved locally:
 - Front unit counts
 - Backstock case counts
 - notes and order overrides
-- on-sale flags and the Show Only Sale Items filter
+- global on-sale flags and the Show Only Sale Items filter
 - uploaded sales sessions
 - matched and unmatched sales rows
 - deduction history
@@ -36,7 +36,7 @@ Saved locally:
 
 ## Supabase Sync
 
-Use the **Store** dropdown at the top of the app to choose the active store number. Store numbers are loaded from the shared Supabase `stores` table, so a store added on one device appears on other devices after refresh. All inventory counts, sales sessions, product edits, deleted items, sale flags, recommendations, deductions, and settings are saved in the `store_app_state` table:
+Use the **Store** dropdown at the top of the app to choose the active store number. Store numbers are loaded from the shared Supabase `stores` table, so a store added on one device appears on other devices after refresh. Inventory counts, sales sessions, product edits, deleted items, recommendations, deductions, and settings are saved per store in the `store_app_state` table:
 
 There is no built-in default store option. If you have not chosen a default store in Settings, the store selector opens blank until you add or select a store.
 
@@ -61,11 +61,13 @@ If Supabase is unavailable, the app continues in local mode and syncs again when
 
 The **Save Progress** button writes a local backup first and then waits for the Supabase upsert to finish. A successful manual save shows **Project saved to Supabase**. If Supabase is unavailable or rejects the write, the app keeps the local backup and shows **Supabase save failed. Project saved locally only.**
 
-Uploaded sales and inventory files are stored as parsed app data inside the selected store's Supabase state. Selecting the same store number on another device loads the same inventory counts, uploaded sales rows, parsed inventory rows, sale flags, deleted items, edits, recommendations, and settings from Supabase.
+Uploaded sales and inventory files are stored as parsed app data inside the selected store's Supabase state. Selecting the same store number on another device loads the same inventory counts, uploaded sales rows, parsed inventory rows, deleted items, edits, recommendations, and settings from Supabase.
+
+Sale status is global, not store-specific. The app stores sale flags in `global_product_sale_status` keyed by product SKU/source SKU, so marking a product on sale in one store makes it appear on sale in every store. Front counts and Backstock counts remain store-specific in `store_app_state`.
 
 Use **Refresh Stores** to pull the shared store list from Supabase and refresh the currently selected store. Use **Reload Store Data** to force a fresh load of the selected store's `store_app_state.app_state` from Supabase on another device.
 
-When a store is selected, the app subscribes to Supabase Realtime updates for that store's `store_app_state` row. To enable live cross-device updates, run the Realtime line in `supabase-setup.sql` or enable Realtime for `store_app_state` in the Supabase dashboard under Database > Replication.
+When a store is selected, the app subscribes to Supabase Realtime updates for that store's `store_app_state` row and for global sale changes in `global_product_sale_status`. To enable live cross-device updates, run the Realtime lines in `supabase-setup.sql` or enable Realtime for both tables in the Supabase dashboard under Database > Replication.
 
 If a device seems stuck on old JavaScript, use **Settings > Clear App Cache**. The service worker bypasses Supabase requests and uses network-first loading for `index.html`, `styles.css`, and `app.js`.
 
