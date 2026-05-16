@@ -90,6 +90,8 @@ const dom = {
 
 let storeRegistry = loadStoreRegistry();
 let currentStoreNumber = storeRegistry.currentStore;
+let globalSaleFlags = {};
+let globalSaleTableAvailable = false;
 let state = defaultState();
 let saveTimer = null;
 let supabaseSaveTimer = null;
@@ -99,8 +101,6 @@ let isSwitchingStore = false;
 let supabaseClientPromise = null;
 let currentStoreChannel = null;
 let currentSaleStatusChannel = null;
-let globalSaleFlags = {};
-let globalSaleTableAvailable = true;
 
 bindEvents();
 render();
@@ -183,6 +183,14 @@ async function getSupabaseClient() {
   return supabaseClientPromise;
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 async function getSupabaseStoreState(storeNumber) {
   const supabase = await getSupabaseClient();
   const { data, error } = await supabase
@@ -203,8 +211,9 @@ async function loadSupabaseStores() {
   const supabase = await getSupabaseClient();
   const { data: storeRows, error: storeError } = await supabase
     .from("stores")
-    .select("store_number")
+    .select("*")
     .order("store_number", { ascending: true });
+  console.log("Stores result:", { data: storeRows, error: storeError });
   if (storeError) {
     console.error("Failed to load stores:", storeError);
     throw storeError;
@@ -1055,6 +1064,9 @@ function bindEvents() {
   dom.inventoryTable.addEventListener("click", handleInventoryClick);
   dom.inventoryTable.addEventListener("change", handleInventoryChange);
   dom.orderingTable.addEventListener("change", handleOrderingChange);
+  dom.statusBanner.addEventListener("click", event => {
+    if (event.target.closest("#retryStoreLoadButton")) initializeSupabaseSync();
+  });
   window.addEventListener("online", () => {
     setStatus("Back online. Syncing latest local changes to Supabase.");
     syncCurrentStoreToSupabase();
@@ -1068,9 +1080,12 @@ function bindEvents() {
 async function initializeSupabaseSync() {
   renderStoreSelector();
   try {
-    await refreshStoresFromSupabase();
-    await refreshGlobalSaleFlagsFromSupabase({ silent: true });
-    await safeSubscribeToGlobalSaleStatuses();
+    const storesLoaded = await refreshStoresFromSupabase();
+    if (!storesLoaded) {
+      state = loadState(currentStoreNumber || "");
+      render();
+      return;
+    }
     if (selectedSupabaseStoreNumber()) {
       await loadSelectedStoreFromSupabase();
     } else {
@@ -1085,7 +1100,8 @@ async function initializeSupabaseSync() {
       render();
     }
     setSyncStatus("Supabase failed, using local backup");
-    showSupabaseError(error);
+    console.error("App initialization failed:", error);
+    showStoreLoadError(error);
   }
 }
 
@@ -1225,16 +1241,13 @@ async function safeSubscribeToGlobalSaleStatuses() {
 }
 
 async function safeSubscribeToCurrentStore(storeNumber) {
-  try {
-    await subscribeToCurrentStore(storeNumber);
-  } catch (error) {
-    console.warn("Store realtime subscription failed; continuing without realtime.", error);
-  }
+  // TODO: Re-enable realtime after store loading is stable.
+  console.log("Realtime disabled during store-loading repair:", storeNumber);
 }
 
 async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
   try {
-    const remoteStores = await loadSupabaseStores();
+    const remoteStores = await withTimeout(loadSupabaseStores(), 10000, "Store loading timed out");
     console.log("Selected store before refresh:", currentStoreNumber);
     const defaultStore = getDefaultStoreNumber();
     const mergedStores = [...new Set(remoteStores.map(cleanText).filter(Boolean))]
@@ -1243,20 +1256,27 @@ async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
     storeRegistry.stores = mergedStores;
     if (!currentStoreNumber && defaultStore && storeRegistry.stores.includes(defaultStore)) {
       currentStoreNumber = defaultStore;
+    } else if (!currentStoreNumber && storeRegistry.stores.length) {
+      currentStoreNumber = storeRegistry.stores[0];
     } else if (!storeRegistry.stores.includes(currentStoreNumber)) {
-      currentStoreNumber = "";
+      currentStoreNumber = storeRegistry.stores[0] || "";
     }
     storeRegistry.currentStore = currentStoreNumber;
     saveStoreRegistry();
     renderStoreSelector();
     renderDefaultStoreSettings();
     console.log("Selected store:", currentStoreNumber);
-    if (showConfirmation) showToast("Stores refreshed from Supabase.");
+    if (!storeRegistry.stores.length) {
+      setStatus("No stores found. Add a store to begin.");
+    } else if (showConfirmation) {
+      showToast("Stores refreshed from Supabase.");
+    }
+    return true;
   } catch (error) {
     setSyncStatus("Supabase offline, using local backup");
-    setStatus("Stores could not be loaded. Check Supabase connection or permissions.", true);
     console.error("Failed to load stores:", error);
-    showSupabaseError(error);
+    showStoreLoadError(error);
+    return false;
   }
 }
 
@@ -1344,8 +1364,7 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     console.log("Selected store:", storeNumber);
     console.log("Loading inventory for store:", storeNumber);
     setSyncStatus(`Loading Store ${storeNumber} from Supabase…`);
-    await refreshGlobalSaleFlagsFromSupabase({ silent: true });
-    const remoteState = await getSupabaseStoreState(storeNumber);
+    const remoteState = await withTimeout(getSupabaseStoreState(storeNumber), 10000, "Inventory loading timed out");
     console.log("Loaded from Supabase store:", storeNumber, remoteState);
     if (storeNumber !== currentStoreNumber) return;
     if (remoteState) {
@@ -1893,18 +1912,7 @@ async function updateInventoryProduct(product, updates, { historySource = "manua
   recalculateRecommendations();
   render();
 
-  const saleChanged = product.onSale !== previousValues.onSale;
-  if (saleChanged) {
-    const globalSaleSaved = await saveGlobalSaleStatus(product, product.onSale, { silent: true });
-    if (!globalSaleSaved) {
-      product.onSale = previousValues.onSale;
-      applyGlobalSaleFlagsToState();
-      recalculateRecommendations();
-      render();
-      showToast("Sale status could not be saved.");
-      return false;
-    }
-  }
+  // TODO: Re-enable global sale syncing after store loading is stable.
 
   const saved = await saveInventoryMutationToSupabase({ silent: true });
   if (saved) {
@@ -2266,7 +2274,6 @@ function clearInventoryCounts() {
 async function clearAllSaleFlags() {
   if (!confirm("Clear all On Sale flags? Inventory counts and sales data will not be changed.")) return;
   try {
-    await clearGlobalSaleFlags();
     for (const product of state.inventory.products) {
       product.onSale = false;
       product.lastUpdated = new Date().toISOString();
@@ -2274,7 +2281,7 @@ async function clearAllSaleFlags() {
     state.settings.showSaleOnly = false;
     recalculateRecommendations();
     saveState();
-    setStatus("All global sale flags cleared.");
+    setStatus("Sale flags cleared for the current store.");
     showToast("Sale flags cleared.");
   } catch (error) {
     console.error("Clear sale flags failed:", error);
@@ -2528,6 +2535,15 @@ function metric(label, value) {
 function setStatus(message, isError = false) {
   dom.statusBanner.textContent = message;
   dom.statusBanner.classList.toggle("error", isError);
+}
+
+function showStoreLoadError(error) {
+  console.error("Store loading error:", error);
+  dom.statusBanner.innerHTML = `
+    <span>Stores could not be loaded. Check Supabase connection or permissions.</span>
+    <button id="retryStoreLoadButton" class="secondary-button status-retry-button" type="button">Retry</button>
+  `;
+  dom.statusBanner.classList.add("error");
 }
 
 function showSupabaseError(error) {
