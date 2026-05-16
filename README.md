@@ -67,6 +67,8 @@ Sale status is global, not store-specific. The app stores sale flags in `global_
 
 If the global sale table has not been created yet, the app keeps store loading working and falls back to updating sale flags inside every store's `store_app_state` row. Run the latest `supabase-setup.sql` so the dedicated global sale table and Realtime subscription are available.
 
+Use **Settings > Clear All Sales** to remove sale status from every product in every store. This clears sale fields (`on_sale`, `sale_price`, `sale_note`, `sale_start`, and `sale_end`) where the global sale table exists and also clears store-state sale flags. Inventory counts, Backstock, Front, notes, sales data, and order quantities are not changed.
+
 Use **Refresh Stores** to pull the shared store list from Supabase and refresh the currently selected store. Use **Reload Store Data** to force a fresh load of the selected store's `store_app_state.app_state` from Supabase on another device.
 
 When a store is selected, the app subscribes to Supabase Realtime updates for that store's `store_app_state` row and for global sale changes in `global_product_sale_status`. To enable live cross-device updates, run the Realtime lines in `supabase-setup.sql` or enable Realtime for both tables in the Supabase dashboard under Database > Replication.

@@ -91,7 +91,7 @@ const dom = {
 let storeRegistry = loadStoreRegistry();
 let currentStoreNumber = storeRegistry.currentStore;
 let globalSaleFlags = {};
-let globalSaleTableAvailable = false;
+let globalSaleTableAvailable = true;
 let state = defaultState();
 let saveTimer = null;
 let supabaseSaveTimer = null;
@@ -101,6 +101,7 @@ let isSwitchingStore = false;
 let supabaseClientPromise = null;
 let currentStoreChannel = null;
 let currentSaleStatusChannel = null;
+let saleClearInProgress = false;
 
 bindEvents();
 render();
@@ -341,6 +342,10 @@ async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
       .upsert({
         product_id: productId,
         on_sale: onSale === true,
+        sale_price: null,
+        sale_note: null,
+        sale_start: null,
+        sale_end: null,
         updated_at: updatedAt,
       });
     console.log("Sale update result:", { data: null, error });
@@ -395,7 +400,7 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
     for (const product of products) {
       const keys = saleStatusKeys(product);
       if (keys.includes(target)) {
-        product.onSale = onSale === true;
+        setProductSaleFields(product, onSale === true);
         product.lastUpdated = product.lastUpdated || updatedAt;
         changed = true;
       }
@@ -420,6 +425,7 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
   const { error: upsertError } = await supabase
     .from("store_app_state")
     .upsert(rowsToSave);
+  console.log("Sale update result:", { table: "store_app_state", rows: rowsToSave.length, error: upsertError });
   if (upsertError) {
     console.error("Failed to save global sale fallback store states:", upsertError);
     throw upsertError;
@@ -427,6 +433,13 @@ async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new D
 }
 
 async function clearGlobalSaleFlags() {
+  console.log("Clearing all sales...");
+  console.log("Clearing sale table/fields:", {
+    table: "global_product_sale_status",
+    fields: ["on_sale", "sale_price", "sale_note", "sale_start", "sale_end"],
+    fallbackTable: "store_app_state",
+    fallbackFields: ["app_state.inventory.products[].onSale", "app_state.saleFlags"],
+  });
   const updatedAt = new Date().toISOString();
   const productIds = [...new Set([
     ...PRODUCT_CATALOG.map(product => normalizeUpc(product.sku)),
@@ -451,8 +464,13 @@ async function clearGlobalSaleFlags() {
       .upsert(productIds.map(productId => ({
         product_id: productId,
         on_sale: false,
+        sale_price: null,
+        sale_note: null,
+        sale_start: null,
+        sale_end: null,
         updated_at: updatedAt,
       })));
+    console.log("Clear all sales result:", { data: null, error: upsertError });
     if (upsertError) {
       if (isMissingSupabaseTableError(upsertError, "global_product_sale_status")) {
         globalSaleTableAvailable = false;
@@ -465,8 +483,16 @@ async function clearGlobalSaleFlags() {
 
   const { error: updateError } = await supabase
     .from("global_product_sale_status")
-    .update({ on_sale: false, updated_at: updatedAt })
+    .update({
+      on_sale: false,
+      sale_price: null,
+      sale_note: null,
+      sale_start: null,
+      sale_end: null,
+      updated_at: updatedAt,
+    })
     .neq("product_id", "");
+  console.log("Clear all sales result:", { data: null, error: updateError });
   if (updateError) {
     if (isMissingSupabaseTableError(updateError, "global_product_sale_status")) {
       globalSaleTableAvailable = false;
@@ -490,10 +516,11 @@ async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOStri
     const appState = row.app_state || {};
     const products = appState.inventory?.products || appState.inventoryData?.products || appState.inventoryFileData?.products || [];
     for (const product of products) {
-      product.onSale = onSale === true;
+      setProductSaleFields(product, onSale === true);
     }
-    appState.saleFlags = Object.fromEntries(products
-      .flatMap(product => saleStatusKeys(product).map(key => [key, onSale === true])));
+    appState.saleFlags = onSale === true
+      ? Object.fromEntries(products.flatMap(product => saleStatusKeys(product).map(key => [key, true])))
+      : {};
     appState.updatedAt = updatedAt;
     appState.lastUpdated = updatedAt;
     rowsToSave.push({
@@ -506,6 +533,7 @@ async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOStri
   const { error: upsertError } = await supabase
     .from("store_app_state")
     .upsert(rowsToSave);
+  console.log("Clear all sales result:", { table: "store_app_state", rows: rowsToSave.length, error: upsertError });
   if (upsertError) throw upsertError;
 }
 
@@ -747,6 +775,34 @@ function applyGlobalSaleFlagsToProducts(products = []) {
 
 function applyGlobalSaleFlagsToState() {
   applyGlobalSaleFlagsToProducts(state.inventory?.products || []);
+}
+
+function applySaleFlagsMapToProducts(products = [], saleFlags = {}) {
+  const normalizedFlags = Object.fromEntries(Object.entries(saleFlags || {})
+    .map(([key, value]) => [normalizeUpc(key), value === true]));
+  for (const product of products) {
+    for (const key of saleStatusKeys(product)) {
+      if (Object.hasOwn(normalizedFlags, key)) {
+        setProductSaleFields(product, normalizedFlags[key]);
+        break;
+      }
+    }
+  }
+}
+
+function setProductSaleFields(product, onSale) {
+  if (!product) return;
+  product.onSale = onSale === true;
+  if (!onSale) {
+    delete product.salePrice;
+    delete product.sale_price;
+    delete product.saleNote;
+    delete product.sale_note;
+    delete product.saleStart;
+    delete product.sale_start;
+    delete product.saleEnd;
+    delete product.sale_end;
+  }
 }
 
 function isMissingSupabaseTableError(error, tableName = "") {
@@ -1004,6 +1060,7 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
       base,
     ),
   };
+  applySaleFlagsMapToProducts(base.inventory.products, remoteState.saleFlags || {});
   applyGlobalSaleFlagsToProducts(base.inventory.products);
   if (base.uploads?.sales?.parsedRows?.length && !base.sales.sessions.length) {
     const restoredSession = {
@@ -1703,6 +1760,8 @@ function renderDefaultStoreSettings() {
   dom.settingsCurrentStoreText.textContent = currentStoreNumber || "None selected";
   dom.defaultStoreText.textContent = defaultStore || "None set";
   dom.clearDefaultStoreButton.disabled = !defaultStore;
+  dom.clearSaleFlagsButton.disabled = saleClearInProgress;
+  dom.clearSaleFlagsButton.textContent = saleClearInProgress ? "Clearing sales..." : "Clear All Sales";
 }
 
 function renderSyncStatus() {
@@ -1912,7 +1971,22 @@ async function updateInventoryProduct(product, updates, { historySource = "manua
   recalculateRecommendations();
   render();
 
-  // TODO: Re-enable global sale syncing after store loading is stable.
+  const saleChanged = product.onSale !== previousValues.onSale;
+  if (saleChanged) {
+    const globalSaleSaved = await saveGlobalSaleStatus(product, product.onSale, { silent: true });
+    if (!globalSaleSaved) {
+      product.onSale = previousValues.onSale;
+      recalculateRecommendations();
+      render();
+      showToast("Sale status could not be saved.");
+      return false;
+    }
+  }
+
+  if (saleChanged && !pendingHistory.length && !Object.hasOwn(updates, "notes")) {
+    saveLocalBackup();
+    return true;
+  }
 
   const saved = await saveInventoryMutationToSupabase({ silent: true });
   if (saved) {
@@ -2272,21 +2346,31 @@ function clearInventoryCounts() {
 }
 
 async function clearAllSaleFlags() {
-  if (!confirm("Clear all On Sale flags? Inventory counts and sales data will not be changed.")) return;
+  if (saleClearInProgress) return;
+  if (!confirm("Clear All Sales?\n\nThis will remove sale status from every item in every store. Inventory counts will not be changed.")) return;
+  saleClearInProgress = true;
+  renderDefaultStoreSettings();
+  setStatus("Clearing sales...");
   try {
+    await clearGlobalSaleFlags();
     for (const product of state.inventory.products) {
-      product.onSale = false;
+      setProductSaleFields(product, false);
       product.lastUpdated = new Date().toISOString();
     }
     state.settings.showSaleOnly = false;
     recalculateRecommendations();
-    saveState();
-    setStatus("Sale flags cleared for the current store.");
-    showToast("Sale flags cleared.");
+    render();
+    saveLocalBackup();
+    setStatus("All sales cleared.");
+    showToast("All sales cleared.");
   } catch (error) {
     console.error("Clear sale flags failed:", error);
     showSupabaseError(error);
-    showToast("Sale flags could not be cleared globally.");
+    setStatus("Could not clear sales.", true);
+    showToast("Could not clear sales.");
+  } finally {
+    saleClearInProgress = false;
+    renderDefaultStoreSettings();
   }
 }
 
