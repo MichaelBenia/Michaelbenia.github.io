@@ -100,6 +100,7 @@ let supabaseClientPromise = null;
 let currentStoreChannel = null;
 let currentSaleStatusChannel = null;
 let globalSaleFlags = {};
+let globalSaleTableAvailable = true;
 
 bindEvents();
 render();
@@ -198,23 +199,34 @@ async function getSupabaseStoreState(storeNumber) {
 }
 
 async function loadSupabaseStores() {
+  console.log("Loading stores...");
   const supabase = await getSupabaseClient();
   const { data: storeRows, error: storeError } = await supabase
     .from("stores")
     .select("store_number")
     .order("store_number", { ascending: true });
-  if (storeError) throw storeError;
+  if (storeError) {
+    console.error("Failed to load stores:", storeError);
+    throw storeError;
+  }
 
-  const { data: appStateRows, error: appStateError } = await supabase
+  let appStateRows = [];
+  const { data, error: appStateError } = await supabase
     .from("store_app_state")
     .select("store_number")
     .order("store_number", { ascending: true });
-  if (appStateError) throw appStateError;
+  if (appStateError) {
+    console.error("Failed to load store_app_state store numbers; continuing with stores table only:", appStateError);
+  } else {
+    appStateRows = data || [];
+  }
 
-  return [...new Set([
+  const stores = [...new Set([
     ...(storeRows || []).map(row => cleanText(row.store_number)),
     ...(appStateRows || []).map(row => cleanText(row.store_number)),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  console.log("Stores loaded:", stores);
+  return stores;
 }
 
 async function upsertSupabaseStore(storeNumber) {
@@ -234,7 +246,13 @@ async function loadSupabaseGlobalSaleFlags() {
   const { data, error } = await supabase
     .from("global_product_sale_status")
     .select("product_id, on_sale, updated_at");
-  if (error) throw error;
+  if (error) {
+    if (isMissingSupabaseTableError(error, "global_product_sale_status")) {
+      globalSaleTableAvailable = false;
+    }
+    throw error;
+  }
+  globalSaleTableAvailable = true;
   return Object.fromEntries((data || [])
     .map(row => [normalizeUpc(row.product_id), row.on_sale === true])
     .filter(([productId]) => productId));
@@ -243,23 +261,70 @@ async function loadSupabaseGlobalSaleFlags() {
 async function refreshGlobalSaleFlagsFromSupabase({ silent = false } = {}) {
   try {
     globalSaleFlags = await loadSupabaseGlobalSaleFlags();
+    if (globalSaleTableAvailable && !Object.keys(globalSaleFlags).length) {
+      await seedGlobalSaleFlagsFromStoreStates();
+    }
     applyGlobalSaleFlagsToState();
     return true;
   } catch (error) {
     console.error("Global sale status load failed:", error);
-    if (!silent) showSupabaseError(error);
+    if (isMissingSupabaseTableError(error, "global_product_sale_status")) {
+      globalSaleTableAvailable = false;
+      setStatus("Global sale status table is missing. Run supabase-setup.sql; using store-state fallback for now.", true);
+    } else if (!silent) {
+      showSupabaseError(error);
+    }
     return false;
   }
+}
+
+async function seedGlobalSaleFlagsFromStoreStates() {
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("store_app_state")
+    .select("app_state");
+  if (error) {
+    console.error("Failed to seed global sale status from store states:", error);
+    return;
+  }
+
+  const saleRows = new Map();
+  for (const row of data || []) {
+    const products = row.app_state?.inventory?.products || row.app_state?.inventoryData?.products || [];
+    for (const product of products) {
+      if (product?.onSale !== true) continue;
+      const productId = saleStatusKey(product);
+      if (productId) saleRows.set(productId, {
+        product_id: productId,
+        on_sale: true,
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (!saleRows.size) return;
+  const { error: upsertError } = await supabase
+    .from("global_product_sale_status")
+    .upsert([...saleRows.values()]);
+  if (upsertError) {
+    console.error("Failed to seed global sale status rows:", upsertError);
+    return;
+  }
+  globalSaleFlags = Object.fromEntries([...saleRows.keys()].map(productId => [productId, true]));
 }
 
 async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
   const productId = saleStatusKey(product);
   if (!productId) return false;
   const updatedAt = new Date().toISOString();
+  console.log("Toggling sale globally:", { productId, sku: product.id, newSaleStatus: onSale === true });
   globalSaleFlags[productId] = onSale === true;
   applyGlobalSaleFlagsToState();
   recalculateRecommendations();
   render();
+  if (!globalSaleTableAvailable) {
+    return saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { silent });
+  }
   try {
     const supabase = await getSupabaseClient();
     const { error } = await supabase
@@ -269,15 +334,86 @@ async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
         on_sale: onSale === true,
         updated_at: updatedAt,
       });
+    console.log("Sale update result:", { data: null, error });
     if (error) throw error;
+    await updateAllStoreStateSaleFlags(productId, onSale, updatedAt);
     setSyncStatus("Global sale status synced to Supabase");
     if (!silent) setStatus(`${productId} sale status updated globally.`);
     return true;
   } catch (error) {
+    console.log("Sale update result:", { data: null, error });
+    if (isMissingSupabaseTableError(error, "global_product_sale_status")) {
+      globalSaleTableAvailable = false;
+      return saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { silent });
+    }
     console.error("Global sale status save failed:", error);
     setSyncStatus("Supabase save failed");
     showSupabaseError(error);
     return false;
+  }
+}
+
+async function saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { silent = false } = {}) {
+  try {
+    await updateAllStoreStateSaleFlags(productId, onSale, updatedAt);
+    setSyncStatus("Global sale status synced through store states");
+    if (!silent) setStatus(`${productId} sale status updated across stores.`);
+    return true;
+  } catch (error) {
+    console.error("Global sale status fallback save failed:", error);
+    setSyncStatus("Supabase save failed");
+    showSupabaseError(error);
+    return false;
+  }
+}
+
+async function updateAllStoreStateSaleFlags(productId, onSale, updatedAt = new Date().toISOString()) {
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("store_app_state")
+    .select("store_number, app_state");
+  if (error) {
+    console.error("Failed to load store states for global sale fallback:", error);
+    throw error;
+  }
+
+  const target = normalizeUpc(productId);
+  const rowsToSave = [];
+  for (const row of data || []) {
+    const appState = row.app_state || {};
+    const products = appState.inventory?.products || appState.inventoryData?.products || appState.inventoryFileData?.products || [];
+    let changed = false;
+    for (const product of products) {
+      const keys = saleStatusKeys(product);
+      if (keys.includes(target)) {
+        product.onSale = onSale === true;
+        product.lastUpdated = product.lastUpdated || updatedAt;
+        changed = true;
+      }
+    }
+    if (!appState.saleFlags) appState.saleFlags = {};
+    if (appState.saleFlags[target] !== (onSale === true)) {
+      appState.saleFlags[target] = onSale === true;
+      changed = true;
+    }
+    if (changed) {
+      appState.updatedAt = updatedAt;
+      appState.lastUpdated = updatedAt;
+      rowsToSave.push({
+        store_number: cleanText(row.store_number),
+        app_state: appState,
+        updated_at: updatedAt,
+      });
+    }
+  }
+
+  if (!rowsToSave.length) return;
+  const { error: upsertError } = await supabase
+    .from("store_app_state")
+    .upsert(rowsToSave);
+  if (upsertError) {
+    console.error("Failed to save global sale fallback store states:", upsertError);
+    throw upsertError;
   }
 }
 
@@ -294,6 +430,11 @@ async function clearGlobalSaleFlags() {
   recalculateRecommendations();
   render();
 
+  if (!globalSaleTableAvailable) {
+    await updateEveryStoreSaleFlag(false, updatedAt);
+    return;
+  }
+
   const supabase = await getSupabaseClient();
   if (productIds.length) {
     const { error: upsertError } = await supabase
@@ -303,14 +444,60 @@ async function clearGlobalSaleFlags() {
         on_sale: false,
         updated_at: updatedAt,
       })));
-    if (upsertError) throw upsertError;
+    if (upsertError) {
+      if (isMissingSupabaseTableError(upsertError, "global_product_sale_status")) {
+        globalSaleTableAvailable = false;
+        await updateEveryStoreSaleFlag(false, updatedAt);
+        return;
+      }
+      throw upsertError;
+    }
   }
 
   const { error: updateError } = await supabase
     .from("global_product_sale_status")
     .update({ on_sale: false, updated_at: updatedAt })
     .neq("product_id", "");
-  if (updateError) throw updateError;
+  if (updateError) {
+    if (isMissingSupabaseTableError(updateError, "global_product_sale_status")) {
+      globalSaleTableAvailable = false;
+      await updateEveryStoreSaleFlag(false, updatedAt);
+      return;
+    }
+    throw updateError;
+  }
+  await updateEveryStoreSaleFlag(false, updatedAt);
+}
+
+async function updateEveryStoreSaleFlag(onSale, updatedAt = new Date().toISOString()) {
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("store_app_state")
+    .select("store_number, app_state");
+  if (error) throw error;
+
+  const rowsToSave = [];
+  for (const row of data || []) {
+    const appState = row.app_state || {};
+    const products = appState.inventory?.products || appState.inventoryData?.products || appState.inventoryFileData?.products || [];
+    for (const product of products) {
+      product.onSale = onSale === true;
+    }
+    appState.saleFlags = Object.fromEntries(products
+      .flatMap(product => saleStatusKeys(product).map(key => [key, onSale === true])));
+    appState.updatedAt = updatedAt;
+    appState.lastUpdated = updatedAt;
+    rowsToSave.push({
+      store_number: cleanText(row.store_number),
+      app_state: appState,
+      updated_at: updatedAt,
+    });
+  }
+  if (!rowsToSave.length) return;
+  const { error: upsertError } = await supabase
+    .from("store_app_state")
+    .upsert(rowsToSave);
+  if (upsertError) throw upsertError;
 }
 
 async function saveSupabaseStoreState(storeNumber, appState) {
@@ -551,6 +738,23 @@ function applyGlobalSaleFlagsToProducts(products = []) {
 
 function applyGlobalSaleFlagsToState() {
   applyGlobalSaleFlagsToProducts(state.inventory?.products || []);
+}
+
+function isMissingSupabaseTableError(error, tableName = "") {
+  const haystack = [
+    error?.code,
+    error?.message,
+    error?.details,
+    error?.hint,
+  ].map(value => String(value || "").toLowerCase()).join(" ");
+  const table = String(tableName || "").toLowerCase();
+  return haystack.includes("42p01")
+    || haystack.includes("pgrst205")
+    || haystack.includes("404")
+    || haystack.includes("could not find")
+    || haystack.includes("does not exist")
+    || haystack.includes("relation")
+    || (table && haystack.includes(table) && haystack.includes("schema cache"));
 }
 
 function loadState(storeNumber = currentStoreNumber || "") {
@@ -866,7 +1070,7 @@ async function initializeSupabaseSync() {
   try {
     await refreshStoresFromSupabase();
     await refreshGlobalSaleFlagsFromSupabase({ silent: true });
-    await subscribeToGlobalSaleStatuses();
+    await safeSubscribeToGlobalSaleStatuses();
     if (selectedSupabaseStoreNumber()) {
       await loadSelectedStoreFromSupabase();
     } else {
@@ -967,6 +1171,10 @@ async function subscribeToCurrentStore(storeNumber) {
 }
 
 async function subscribeToGlobalSaleStatuses() {
+  if (!globalSaleTableAvailable) {
+    console.warn("Global sale status realtime skipped because global_product_sale_status is unavailable.");
+    return;
+  }
   const supabase = await getSupabaseClient();
   if (currentSaleStatusChannel) {
     await supabase.removeChannel(currentSaleStatusChannel);
@@ -1002,7 +1210,26 @@ async function subscribeToGlobalSaleStatuses() {
     )
     .subscribe(status => {
       console.log("Supabase global sale realtime status:", status);
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.warn("Global sale realtime unavailable; manual reload and store-state fallback remain active.");
+      }
     });
+}
+
+async function safeSubscribeToGlobalSaleStatuses() {
+  try {
+    await subscribeToGlobalSaleStatuses();
+  } catch (error) {
+    console.warn("Global sale realtime subscription failed; continuing without realtime.", error);
+  }
+}
+
+async function safeSubscribeToCurrentStore(storeNumber) {
+  try {
+    await subscribeToCurrentStore(storeNumber);
+  } catch (error) {
+    console.warn("Store realtime subscription failed; continuing without realtime.", error);
+  }
 }
 
 async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
@@ -1023,10 +1250,12 @@ async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
     saveStoreRegistry();
     renderStoreSelector();
     renderDefaultStoreSettings();
+    console.log("Selected store:", currentStoreNumber);
     if (showConfirmation) showToast("Stores refreshed from Supabase.");
   } catch (error) {
     setSyncStatus("Supabase offline, using local backup");
-    setStatus("Supabase offline, using local backup", true);
+    setStatus("Stores could not be loaded. Check Supabase connection or permissions.", true);
+    console.error("Failed to load stores:", error);
     showSupabaseError(error);
   }
 }
@@ -1076,7 +1305,7 @@ async function switchStore(storeNumber) {
   editingProductId = null;
   render();
   isSwitchingStore = false;
-  if (!nextStore) await subscribeToCurrentStore("");
+  if (!nextStore) await safeSubscribeToCurrentStore("");
   await loadSelectedStoreFromSupabase();
 }
 
@@ -1112,6 +1341,8 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     return;
   }
   try {
+    console.log("Selected store:", storeNumber);
+    console.log("Loading inventory for store:", storeNumber);
     setSyncStatus(`Loading Store ${storeNumber} from Supabase…`);
     await refreshGlobalSaleFlagsFromSupabase({ silent: true });
     const remoteState = await getSupabaseStoreState(storeNumber);
@@ -1119,31 +1350,34 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     if (storeNumber !== currentStoreNumber) return;
     if (remoteState) {
       applyAppState(remoteState, storeNumber);
+      console.log("Inventory loaded:", state.inventory?.products || []);
       saveLocalCache(storeNumber, state);
       render();
       setSyncStatus(`Store ${storeNumber} loaded from Supabase`);
       setStatus(`Store ${storeNumber} loaded from Supabase`);
-      await subscribeToCurrentStore(storeNumber);
+      await safeSubscribeToCurrentStore(storeNumber);
       return;
     }
     state = defaultState();
     state.storeNumber = storeNumber;
     applyGlobalSaleFlagsToState();
+    console.log("Inventory loaded:", state.inventory?.products || []);
     saveLocalBackup();
     render();
     if (createIfMissing) {
       await createSupabaseStoreIfMissing(storeNumber);
-      await subscribeToCurrentStore(storeNumber);
+      await safeSubscribeToCurrentStore(storeNumber);
     } else {
       setStatus(`Store ${storeNumber} has no Supabase data yet. Starting with a blank store state.`);
-      await subscribeToCurrentStore(storeNumber);
+      await safeSubscribeToCurrentStore(storeNumber);
     }
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
       state = loadState(storeNumber);
       render();
       setSyncStatus("Supabase failed, using local backup");
-      setStatus("Supabase offline, using local backup", true);
+      setStatus("Inventory could not be loaded for this store. Supabase offline, using local backup.", true);
+      console.error("Inventory could not be loaded for this store:", error);
       showSupabaseError(error);
     }
   }
@@ -1667,7 +1901,7 @@ async function updateInventoryProduct(product, updates, { historySource = "manua
       applyGlobalSaleFlagsToState();
       recalculateRecommendations();
       render();
-      showToast("Sale status could not be saved globally.");
+      showToast("Sale status could not be saved.");
       return false;
     }
   }

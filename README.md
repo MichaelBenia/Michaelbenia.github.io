@@ -65,6 +65,8 @@ Uploaded sales and inventory files are stored as parsed app data inside the sele
 
 Sale status is global, not store-specific. The app stores sale flags in `global_product_sale_status` keyed by product SKU/source SKU, so marking a product on sale in one store makes it appear on sale in every store. Front counts and Backstock counts remain store-specific in `store_app_state`.
 
+If the global sale table has not been created yet, the app keeps store loading working and falls back to updating sale flags inside every store's `store_app_state` row. Run the latest `supabase-setup.sql` so the dedicated global sale table and Realtime subscription are available.
+
 Use **Refresh Stores** to pull the shared store list from Supabase and refresh the currently selected store. Use **Reload Store Data** to force a fresh load of the selected store's `store_app_state.app_state` from Supabase on another device.
 
 When a store is selected, the app subscribes to Supabase Realtime updates for that store's `store_app_state` row and for global sale changes in `global_product_sale_status`. To enable live cross-device updates, run the Realtime lines in `supabase-setup.sql` or enable Realtime for both tables in the Supabase dashboard under Database > Replication.
@@ -89,6 +91,16 @@ create table if not exists store_app_state (
 create table if not exists stores (
   store_number text primary key,
   created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create table if not exists global_product_sale_status (
+  product_id text primary key,
+  on_sale boolean not null default false,
+  sale_price numeric null,
+  sale_note text null,
+  sale_start timestamptz null,
+  sale_end timestamptz null,
   updated_at timestamptz default now()
 );
 ```
