@@ -81,7 +81,9 @@ Use **Settings > Inventory Tools > Clear Stock History** to remove only stock ad
 
 ### Supabase Setup SQL
 
-Run the SQL in `supabase-setup.sql` in your Supabase SQL editor.
+Run the SQL in `supabase-setup.sql` in your Supabase SQL editor. The same inventory history table setup is also available as `../supabase/migrations/20260517143000_inventory_adjustment_history.sql` if you manage Supabase migrations outside GitHub Pages.
+
+If **Clear Stock History** says `Stock history is not set up yet. No history was cleared.`, the live Supabase project is missing `inventory_adjustment_history`. Run the setup SQL/migration, then refresh the app and try again.
 
 The included RLS policies are for personal testing only. They are public and unauthenticated, so they are not safe for production or public sharing. Add Supabase Auth and store-scoped policies before sharing the app widely.
 

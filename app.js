@@ -83,6 +83,7 @@ const dom = {
   restoreDeletedItemsButton: document.getElementById("restoreDeletedItemsButton"),
   clearAllButton: document.getElementById("clearAllButton"),
   clearAppCacheButton: document.getElementById("clearAppCacheButton"),
+  helpGuideButton: document.getElementById("helpGuideButton"),
   saleOnlyToggle: document.getElementById("saleOnlyToggle"),
   settingsExportInventoryButton: document.getElementById("settingsExportInventoryButton"),
   settingsExportOrdersButton: document.getElementById("settingsExportOrdersButton"),
@@ -1278,6 +1279,7 @@ function bindEvents() {
   dom.restoreDeletedItemsButton.addEventListener("click", restoreDeletedInventoryItems);
   dom.clearAllButton.addEventListener("click", clearAllLocalData);
   dom.clearAppCacheButton.addEventListener("click", clearAppCache);
+  dom.helpGuideButton.addEventListener("click", openHelpGuide);
   dom.closeHistoryModalButton.addEventListener("click", closeInventoryHistory);
   dom.inventorySearchInput.addEventListener("input", () => {
     state.settings.inventorySearch = dom.inventorySearchInput.value;
@@ -2607,8 +2609,10 @@ function createInventoryTransfer(product, transferDirection, caseSize) {
 function historyEntriesForProduct(productId) {
   const id = normalizeUpc(productId);
   const cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000);
+  const storeNumber = selectedSupabaseStoreNumber();
   return (state.inventoryHistory || [])
     .filter(entry => normalizeUpc(entry.productId) === id)
+    .filter(entry => cleanText(entry.storeNumber || storeNumber) === storeNumber)
     .filter(entry => !isClearedStockHistoryEntry(entry))
     .filter(entry => Date.parse(entry.createdAt) >= cutoff);
 }
@@ -2776,6 +2780,13 @@ function clearInventoryCounts() {
 
 async function clearStockHistoryForCurrentStore() {
   const storeNumber = selectedSupabaseStoreNumber();
+  console.log("Clear Stock History clicked");
+  console.log("Selected store for history clear:", currentStoreNumber);
+  console.log("Selected store ID:", storeNumber);
+  console.log("History source/table used by popup:", {
+    localState: "state.inventoryHistory",
+    supabaseTable: "inventory_adjustment_history",
+  });
   if (!storeNumber) {
     showToast("Select or add a store before clearing stock history.");
     setStatus("Select or add a store before clearing stock history.", true);
@@ -2793,21 +2804,29 @@ async function clearStockHistoryForCurrentStore() {
   const previousHistory = [...(state.inventoryHistory || [])];
   const previousClearedAt = state.stockHistoryClearedAt || null;
   try {
-    state.stockHistoryClearedAt = new Date().toISOString();
-    state.inventoryHistory = previousHistory.filter(entry => !isCurrentStoreStockAdjustment(entry, storeNumber));
-    saveLocalBackup();
     const deleteResult = await clearSupabaseStockAdjustmentHistory(storeNumber);
+    const nextHistory = previousHistory.filter(entry => !isCurrentStoreStockAdjustment(entry, storeNumber));
+    const removedLocalRows = previousHistory.length - nextHistory.length;
+    state.stockHistoryClearedAt = new Date().toISOString();
+    state.inventoryHistory = nextHistory;
+    saveLocalBackup();
     const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Stock history cleared for this store.", silent: true });
     closeInventoryHistory();
     render();
-    if (deleteResult.skippedBecauseMissingTable) {
-      setStatus("Stock history cleared for this store. Optional Supabase history table is not installed.");
+    console.log("History after clear:", state.inventoryHistory);
+    if (deleteResult.missingTable && removedLocalRows === 0) {
+      setStatus("Stock history is not set up yet. No history was cleared.", true);
+      showToast("Stock history is not set up yet. No history was cleared.");
+    } else if (deleteResult.missingTable) {
+      setStatus("Stock history cleared for this store. Supabase history table is not set up yet.");
+      showToast("Stock history cleared for this store.");
     } else if (!savedToSupabase) {
       setStatus("Stock history cleared locally. Supabase save failed, so retry Save Progress when online.", true);
+      showToast("Stock history cleared locally.");
     } else {
       setStatus("Stock history cleared for this store.");
+      showToast("Stock history cleared for this store.");
     }
-    showToast("Stock history cleared for this store.");
   } catch (error) {
     state.inventoryHistory = previousHistory;
     state.stockHistoryClearedAt = previousClearedAt;
@@ -2874,6 +2893,7 @@ async function clearSupabaseStockAdjustmentHistory(storeNumber) {
   ];
 
   for (const attempt of attempts) {
+    console.log("Deleting adjustment history with filters:", attempt.filters);
     console.log("Clearing stock history with:", {
       selectedStore: currentStoreNumber,
       selectedStoreId: storeNumber,
@@ -2882,10 +2902,10 @@ async function clearSupabaseStockAdjustmentHistory(storeNumber) {
     });
     const { data, error } = await attempt.run();
     console.log("Clear stock history result:", { attempt: attempt.label, data, error });
-    if (!error) return { rows: data || [], skippedBecauseMissingTable: false };
+    if (!error) return { rows: data || [] };
     if (isMissingSupabaseTableError(error, tableName)) {
-      console.warn("Optional Supabase history table is missing. Store-scoped app-state history was cleared instead.", error);
-      return { rows: [], skippedBecauseMissingTable: true, error };
+      console.warn("Stock history is not set up yet:", error);
+      return { rows: [], missingTable: true, error };
     }
     if (attempt.canFallback(error)) {
       console.warn(`Clear stock history fallback after ${attempt.label} failed:`, error);
@@ -2894,7 +2914,7 @@ async function clearSupabaseStockAdjustmentHistory(storeNumber) {
     throw error;
   }
 
-  return { rows: [], skippedBecauseMissingTable: false };
+  return { rows: [] };
 }
 
 async function clearAllSaleFlags() {
@@ -2960,6 +2980,10 @@ async function clearAppCache() {
     console.error("Cache clear failed:", error);
     setStatus(`Cache clear failed: ${error?.message || "Unknown error"}`, true);
   }
+}
+
+function openHelpGuide() {
+  window.open("help.pdf", "_blank", "noopener");
 }
 
 function exportInventoryCsv() {

@@ -70,6 +70,7 @@ drop policy if exists "Allow public store insert" on stores;
 drop policy if exists "Allow public store update" on stores;
 drop policy if exists "Allow public inventory history read" on inventory_adjustment_history;
 drop policy if exists "Allow public inventory history insert" on inventory_adjustment_history;
+drop policy if exists "Allow public inventory history delete adjustments" on inventory_adjustment_history;
 drop policy if exists "Allow public inventory history delete" on inventory_adjustment_history;
 drop policy if exists "Allow public global sale read" on global_product_sale_status;
 drop policy if exists "Allow public global sale insert" on global_product_sale_status;
@@ -117,10 +118,10 @@ on inventory_adjustment_history
 for insert
 with check (true);
 
-create policy "Allow public inventory history delete"
+create policy "Allow public inventory history delete adjustments"
 on inventory_adjustment_history
 for delete
-using (true);
+using (event_type = 'adjustment');
 
 create policy "Allow public global sale read"
 on global_product_sale_status

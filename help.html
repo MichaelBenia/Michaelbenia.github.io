@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wine Inventory Help & User Guide</title>
+  <style>
+    :root {
+      color: #201334;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.45;
+    }
+    body {
+      margin: 0;
+      background: #ffffff;
+    }
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 40px 48px 64px;
+    }
+    h1 {
+      margin: 0 0 6px;
+      color: #321164;
+      font-size: 34px;
+      line-height: 1.08;
+    }
+    .tagline {
+      margin: 0;
+      color: #5b3f8c;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .credit {
+      margin: 4px 0 24px;
+      color: #71637f;
+      font-size: 12px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+    h2 {
+      break-after: avoid;
+      margin: 28px 0 8px;
+      color: #4c1d95;
+      font-size: 20px;
+      border-bottom: 1px solid #ded3ef;
+      padding-bottom: 5px;
+    }
+    h3 {
+      break-after: avoid;
+      margin: 18px 0 6px;
+      color: #5a278f;
+      font-size: 15px;
+    }
+    p, li {
+      font-size: 12.5px;
+    }
+    ul, ol {
+      margin-top: 6px;
+      padding-left: 22px;
+    }
+    .placeholder {
+      margin: 12px 0;
+      padding: 14px 16px;
+      border: 1px dashed #b894df;
+      border-radius: 10px;
+      color: #68419b;
+      background: #faf6ff;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .note {
+      padding: 10px 12px;
+      border-left: 4px solid #7c3aed;
+      background: #f7f1ff;
+      border-radius: 8px;
+    }
+    .page-break {
+      break-before: page;
+    }
+    @page {
+      size: letter;
+      margin: 0.55in;
+    }
+    @media print {
+      main {
+        max-width: none;
+        padding: 0;
+      }
+      h2 {
+        margin-top: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Wine Inventory Help & User Guide</h1>
+    <p class="tagline">Count smarter. Order faster.</p>
+    <p class="credit">Created by Michael Benia WR358</p>
+
+    <h2>App overview</h2>
+    <p>Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when Supabase is available, and sales/order work stays separated from stock counts.</p>
+    <div class="placeholder">[Screenshot: Inventory page]</div>
+
+    <h2>Getting started</h2>
+    <ol>
+      <li>Open the app.</li>
+      <li>Select or add a store number.</li>
+      <li>Upload a sales file when you are ready to review ordering.</li>
+      <li>Enter or adjust Front Units and Backstock Cases on the Inventory page.</li>
+      <li>Use Ordering to review matched rows, unmatched rows, units sold, order cases, and unit order recommendations.</li>
+      <li>Use Settings for saving, exports, clearing data, and this guide.</li>
+    </ol>
+
+    <h2>Selecting or switching stores</h2>
+    <p>Use the Store dropdown near the top of the app. Store numbers are treated as text, so leading zeroes are preserved. Data is saved under the selected store number. Switching stores loads that store's inventory counts, uploaded sales data, edited products, deleted products, sale flags, and settings.</p>
+    <p>Use Refresh Stores to reload the shared store list from Supabase. Use Reload Store Data to pull the latest saved data for the selected store.</p>
+
+    <h2>Uploading sales files</h2>
+    <p>Use Upload Sales File near the store controls.</p>
+    <div class="placeholder">[Screenshot: Upload sales file button]</div>
+    <p>Supported files are XLSX and CSV. The app reads the sales file in the browser. Files are not uploaded anywhere except as parsed app data saved under the selected store when you save/sync.</p>
+    <p>The sales parser recognizes headers such as JDE, SKU, UPC, JDE/UPC, JDE/UPC #, Item Number, Product Number, Item, Units, and Net Sales. If a file cannot be read, the app shows a message with the detected columns so you can spot missing or renamed headers.</p>
+
+    <h2>Uploading inventory files</h2>
+    <p>If needed, go to Settings and use Upload Inventory File. Inventory uploads merge into the built-in product catalog. The curated catalog remains the source of truth for display category and item order. Imported files can update counts or matched product information, but they do not reorder the catalog.</p>
+
+    <h2>Using the inventory page</h2>
+    <p>The Inventory page shows products in this fixed order: Premium, Core, Rose/Sparkling, Large Format, Refreshments, and CVQA. Rows can include stock controls, sale marking, edit/delete controls, transfer buttons, and the small circular history button.</p>
+
+    <h2>Searching inventory</h2>
+    <p>The Inventory search field says <strong>Search</strong>. It searches SKU/JDE/UPC, product name, size or type text such as 750, 750mL, 1.5, 1.5L, and 4L, plus pack or case size fields when available. Search is case-insensitive and partial. If Show Only Sale Items is enabled, search filters only within sale items.</p>
+
+    <h2>Front units</h2>
+    <p>Front Units are the individual units on the sales floor/front inventory. You can use plus/minus buttons or type a whole number directly. Front Units cannot be negative. Weekly sales deductions apply to Front Units only. They do not deduct from Backstock Cases.</p>
+
+    <h2>Backstock cases</h2>
+    <p>Backstock Cases are full cases in backstock. Backstock is counted separately from Front Units. Backstock is not deducted when applying weekly sales deductions.</p>
+
+    <h2>Moving cases between backstock and front stock</h2>
+    <p>Triangle transfer buttons move full cases between Backstock and Front Stock. Backstock to Front Stock subtracts 1 backstock case and adds that product's case-size worth of units to Front Units. Front Stock to Backstock subtracts one full case worth of Front Units and adds 1 Backstock Case.</p>
+    <p class="note">Transfers do not change total inventory. They only move stock between locations.</p>
+
+    <h2>Additions and deductions to stock</h2>
+    <p>Any real count change is tracked: Front Units plus/minus, Front Units direct entry, Backstock Cases plus/minus, Backstock Cases direct entry, and weekly sales deduction from Front Units. The app uses the actual change amount. For example, changing Front Units from 10 to 6 records a removal of 4 units.</p>
+
+    <h2>Stock history</h2>
+    <p>Use the small circular i button on a product row to open Inventory History.</p>
+    <div class="placeholder">[Screenshot: Stock history area]</div>
+    <p>The history popup shows the last 14 days. Repeated changes are grouped by product, date, direction, and quantity type. Cases and units are not combined. Transfers are shown as movement events, not as added or removed inventory.</p>
+
+    <h2>Ordering page</h2>
+    <p>The Ordering page shows the active weekly sales dataset, matched rows, unmatched rows, summary metrics, order cases, unit order, and sales deduction controls. Order math uses units sold and product case size. For example, 45 units sold with 12 units per case becomes 4 order cases and 48 units ordered.</p>
+
+    <h2>Weekly sales deduction</h2>
+    <p>Apply Weekly Sales Deduction deducts Units Sold from Front Units only. It does not deduct Backstock Cases. The app keeps a deduction record for the current weekly sales dataset and blocks duplicate deductions for the same dataset.</p>
+
+    <h2>Exporting inventory levels</h2>
+    <p>Go to Settings and use Export Inventory. The browser app exports CSV. The Flutter app exports XLSX. Exported inventory uses current edited SKU/description values and excludes deleted inventory items.</p>
+
+    <h2>Exporting order lists</h2>
+    <p>Go to Settings and use Export Order List. The export includes ordering recommendations based on the current sales data and inventory counts.</p>
+
+    <h2 class="page-break">Settings</h2>
+    <div class="placeholder">[Screenshot: Settings page]</div>
+    <p>Settings contains tools such as Upload Inventory File, Save Progress, Export Inventory, Export Order List, Show Only Sale Items, Clear Stock History, Clear prior sales data, Clear inventory count data, Clear All Sales, Restore Deleted Inventory Items, Clear App Cache, Default Store controls, and Help & User Guide.</p>
+
+    <h2>Clearing prior sales data</h2>
+    <p>Clear prior sales data removes loaded sales sessions, parsed sales rows, matched/unmatched processing rows, and deduction records. It does not change inventory counts.</p>
+
+    <h2>Clearing inventory count data</h2>
+    <p>Clear inventory count data resets Front Units and Backstock Cases. It does not delete products, stores, sale flags, uploaded files, or the built-in catalog.</p>
+
+    <h2>Clearing stock history for the current store only</h2>
+    <p>Clear Stock History removes stock addition and deduction history for the selected store. Inventory counts are not changed. Other stores are not changed. Transfer history is kept when transfer rows can be identified by event type or transfer direction.</p>
+
+    <h2>Troubleshooting common errors</h2>
+    <h3>Could not clear stock history</h3>
+    <p>This usually means Supabase rejected the delete request. Common causes are a missing inventory_adjustment_history table, missing RLS delete policy, offline mode, or no selected store number. Run docs/supabase-setup.sql in the Supabase SQL editor to create the history table and policies.</p>
+    <h3>Stock history is not set up yet. No history was cleared.</h3>
+    <p>The live Supabase project is missing the inventory_adjustment_history table. Run the setup SQL, refresh the app, then try again.</p>
+    <h3>XLSX support is not loaded</h3>
+    <p>The browser app needs xlsx.full.min.js beside index.html, or the SheetJS CDN must be reachable. CSV files still work if XLSX support is unavailable.</p>
+    <h3>Upload says a column is missing</h3>
+    <p>Check the detected column list in the error. Sales files should include a recognized SKU column such as JDE/UPC # and a Units column.</p>
+    <h3>Changes do not appear on another device</h3>
+    <p>Confirm both devices selected the same store number. Use Save Progress, Refresh Stores, and Reload Store Data. If the app seems stale, use Clear App Cache.</p>
+
+    <h2>FAQ</h2>
+    <h3>Does the app upload my original files?</h3>
+    <p>The browser app parses files locally. Parsed app data can be saved to Supabase for the selected store.</p>
+    <h3>Can I use the app without internet?</h3>
+    <p>The app keeps a local backup in the browser. Supabase sync requires internet. Cached app files may continue working offline after the app has been opened.</p>
+    <h3>Are sales global across stores?</h3>
+    <p>Sale status is intended to be global by product/SKU. Inventory counts remain store-specific.</p>
+    <h3>Can I restore deleted built-in products?</h3>
+    <p>Yes. Use Restore Deleted Inventory Items in Settings. Built-in catalog items are hidden through saved state; they are not erased from the app code.</p>
+    <h3>Why are Backstock Cases and Front Units separate?</h3>
+    <p>Backstock is full cases in storage. Front Units are individual units available on the floor. Keeping them separate prevents weekly sales deductions from accidentally removing backstock.</p>
+
+    <h2>Support/contact</h2>
+    <p>For help with store workflow, file formats, or app setup, contact the app owner:</p>
+    <p><strong>Michael Benia WR358</strong></p>
+  </main>
+</body>
+</html>
