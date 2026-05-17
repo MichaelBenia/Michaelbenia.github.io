@@ -642,18 +642,40 @@ async function insertSupabaseInventoryHistory(entry) {
   if (!storeNumber) return;
   try {
     const supabase = await getSupabaseClient();
-    const { error } = await supabase
+    let { error } = await supabase
       .from("inventory_adjustment_history")
       .insert({
         store_number: storeNumber,
         product_id: entry.productId,
         product_name: entry.productName,
-        change_amount: entry.changeAmount,
+        change_amount: entry.changeAmount || 0,
         quantity_type: entry.quantityType || "unit",
         created_at: entry.createdAt,
         user_name: entry.userName || null,
         source: entry.source || "manual_adjustment",
+        event_type: entry.eventType || "adjustment",
+        transfer_direction: entry.transferDirection || null,
+        case_quantity: entry.caseQuantity ?? null,
+        unit_equivalent: entry.unitEquivalent ?? null,
       });
+    if (error && String(error.message || "").includes("column")) {
+      console.warn("Inventory history transfer columns are missing. Run docs/supabase-setup.sql to enable transfer history rows.", error);
+      if ((entry.eventType || "adjustment") === "adjustment") {
+        const fallback = await supabase
+          .from("inventory_adjustment_history")
+          .insert({
+            store_number: storeNumber,
+            product_id: entry.productId,
+            product_name: entry.productName,
+            change_amount: entry.changeAmount || 0,
+            quantity_type: entry.quantityType || "unit",
+            created_at: entry.createdAt,
+            user_name: entry.userName || null,
+            source: entry.source || "manual_adjustment",
+          });
+        error = fallback.error;
+      }
+    }
     if (error) throw error;
   } catch (error) {
     console.error("Inventory history insert failed:", error);
@@ -666,16 +688,28 @@ async function loadSupabaseInventoryHistory(productId) {
   const cutoff = new Date(Date.now() - (14 * 24 * 60 * 60 * 1000)).toISOString();
   try {
     const supabase = await getSupabaseClient();
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("inventory_adjustment_history")
-      .select("product_id, product_name, change_amount, quantity_type, created_at, user_name, source")
+      .select("product_id, product_name, change_amount, quantity_type, created_at, user_name, source, event_type, transfer_direction, case_quantity, unit_equivalent")
       .eq("store_number", storeNumber)
       .eq("product_id", productId)
       .gte("created_at", cutoff)
       .order("created_at", { ascending: false });
+    if (error && String(error.message || "").includes("column")) {
+      console.warn("Inventory history transfer columns are missing. Run docs/supabase-setup.sql to enable transfer history rows.", error);
+      const fallback = await supabase
+        .from("inventory_adjustment_history")
+        .select("product_id, product_name, change_amount, quantity_type, created_at, user_name, source")
+        .eq("store_number", storeNumber)
+        .eq("product_id", productId)
+        .gte("created_at", cutoff)
+        .order("created_at", { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
     if (error) throw error;
     const remoteEntries = (data || []).map(row => ({
-      id: `${row.product_id}-${row.created_at}-${row.change_amount}-${row.quantity_type || "unit"}`,
+      id: `${row.product_id}-${row.created_at}-${row.event_type || "adjustment"}-${row.change_amount}-${row.quantity_type || "unit"}-${row.transfer_direction || ""}`,
       storeNumber,
       productId: row.product_id,
       productName: row.product_name,
@@ -684,6 +718,10 @@ async function loadSupabaseInventoryHistory(productId) {
       createdAt: row.created_at,
       userName: row.user_name || "",
       source: row.source || "manual_adjustment",
+      eventType: row.event_type || "adjustment",
+      transferDirection: row.transfer_direction || "",
+      caseQuantity: row.case_quantity == null ? null : Number(row.case_quantity),
+      unitEquivalent: row.unit_equivalent == null ? null : Number(row.unit_equivalent),
     }));
     mergeInventoryHistory(remoteEntries);
   } catch (error) {
@@ -693,15 +731,29 @@ async function loadSupabaseInventoryHistory(productId) {
 
 function mergeInventoryHistory(entries) {
   const byKey = new Map((state.inventoryHistory || []).map(entry => [
-    `${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.quantityType || "unit"}|${entry.source || ""}`,
+    inventoryHistoryKey(entry),
     entry,
   ]));
   for (const entry of entries) {
-    byKey.set(`${entry.productId}|${entry.createdAt}|${entry.changeAmount}|${entry.quantityType || "unit"}|${entry.source || ""}`, entry);
+    byKey.set(inventoryHistoryKey(entry), entry);
   }
   state.inventoryHistory = [...byKey.values()]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, 5000);
+}
+
+function inventoryHistoryKey(entry) {
+  return [
+    normalizeUpc(entry.productId),
+    entry.createdAt || "",
+    entry.eventType || "adjustment",
+    entry.changeAmount || 0,
+    entry.quantityType || "unit",
+    entry.transferDirection || "",
+    entry.caseQuantity ?? "",
+    entry.unitEquivalent ?? "",
+    entry.source || "",
+  ].join("|");
 }
 
 async function createSupabaseStoreIfMissing(storeNumber) {
@@ -790,7 +842,7 @@ function mergeProductsWithCatalog(products, meta = state) {
       id: product.id,
       sourceSku: product.sourceSku || product.id,
       name: product.name || "Unnamed product",
-      category: "Unmatched Products",
+      category: "Other Products",
       quantity: product.quantity ?? 0,
       originalQuantity: product.originalQuantity ?? product.quantity ?? 0,
       backstock: product.backstock ?? 0,
@@ -1856,14 +1908,12 @@ function renderLastSaved() {
 
 function renderInventorySummary() {
   const visible = state.inventory.products.filter(product => productCategoryInfo(product));
-  const unknown = state.inventory.products.filter(product => !productCategoryInfo(product));
   const totalFront = visible.reduce((sum, product) => sum + Number(product.quantity || 0), 0);
   const totalBack = visible.reduce((sum, product) => sum + Number(product.backstock || 0), 0);
   dom.inventorySummary.innerHTML = [
     metric("Products", visible.length),
     metric("Front Units", totalFront),
     metric("Backstock Cases", totalBack),
-    metric("Unmatched Products", unknown.length),
   ].join("");
 }
 
@@ -1902,7 +1952,7 @@ function renderInventoryTable() {
     }
   }
   if (unknownProducts.length) {
-    html += `<tr class="category-row"><td colspan="9">Unmatched Products</td></tr>`;
+    html += `<tr class="category-row"><td colspan="9">Other Products</td></tr>`;
     for (const product of unknownProducts) {
       html += inventoryRowHtml(product);
     }
@@ -2151,9 +2201,11 @@ async function transferCase(product, direction) {
       previousBackstockCases: currentBackstockCases,
       nextBackstockCases,
     });
-    // TODO: Add transfer-specific inventory history once movement events are supported.
     const saved = await saveInventoryMutationToSupabase({ silent: true });
     if (!saved) throw new Error("Inventory transfer was not saved to Supabase.");
+    commitInventoryAdjustment(createInventoryTransfer(product, direction, caseSize));
+    saveLocalBackup();
+    scheduleSupabaseSave();
     const message = direction === "back_to_front"
       ? "Moved 1 case to front stock."
       : "Moved 1 case to backstock.";
@@ -2362,6 +2414,7 @@ function createInventoryAdjustment(product, changeAmount, quantityTypeOrSource =
     storeNumber: currentStoreNumber || "",
     productId: product.id,
     productName: product.name || "Unnamed product",
+    eventType: "adjustment",
     changeAmount: amount,
     quantityType,
     createdAt: new Date().toISOString(),
@@ -2380,6 +2433,26 @@ function recordInventoryAdjustment(product, changeAmount, source = "manual_adjus
   commitInventoryAdjustment(createInventoryAdjustment(product, changeAmount, historyQuantityTypeForSource(source), source));
 }
 
+function createInventoryTransfer(product, transferDirection, caseSize) {
+  if (!product || (transferDirection !== "back_to_front" && transferDirection !== "front_to_back")) return null;
+  const unitEquivalent = Math.max(1, parseWholeNumber(caseSize) || 12);
+  return {
+    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    storeNumber: currentStoreNumber || "",
+    productId: product.id,
+    productName: product.name || "Unnamed product",
+    eventType: "transfer",
+    transferDirection,
+    caseQuantity: 1,
+    unitEquivalent,
+    changeAmount: 0,
+    quantityType: "case",
+    createdAt: new Date().toISOString(),
+    userName: "",
+    source: "case_transfer",
+  };
+}
+
 function historyEntriesForProduct(productId) {
   const id = normalizeUpc(productId);
   const cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000);
@@ -2393,11 +2466,36 @@ function groupedHistoryForProduct(productId) {
   for (const entry of historyEntriesForProduct(productId)) {
     const created = new Date(entry.createdAt);
     if (Number.isNaN(created.getTime())) continue;
+    const eventType = entry.eventType === "transfer" ? "transfer" : "adjustment";
+    const dateKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
+
+    if (eventType === "transfer") {
+      const transferDirection = entry.transferDirection === "front_to_back" ? "front_to_back" : "back_to_front";
+      const unitEquivalent = Math.max(1, parseWholeNumber(entry.unitEquivalent) || 12);
+      const key = `${normalizeUpc(entry.productId)}:${dateKey}:transfer:${transferDirection}:${unitEquivalent}`;
+      const existing = groups.get(key) || {
+        eventType,
+        transferDirection,
+        caseQuantity: 0,
+        unitEquivalent,
+        totalUnitEquivalent: 0,
+        latestAt: entry.createdAt,
+      };
+      const caseQuantity = Math.max(1, parseWholeNumber(entry.caseQuantity) || 1);
+      existing.caseQuantity += caseQuantity;
+      existing.totalUnitEquivalent += unitEquivalent * caseQuantity;
+      if (Date.parse(entry.createdAt) > Date.parse(existing.latestAt)) {
+        existing.latestAt = entry.createdAt;
+      }
+      groups.set(key, existing);
+      continue;
+    }
+
     const direction = Number(entry.changeAmount || 0) >= 0 ? "added" : "removed";
     const quantityType = entry.quantityType === "case" ? "case" : "unit";
-    const dateKey = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}-${String(created.getDate()).padStart(2, "0")}`;
-    const key = `${normalizeUpc(entry.productId)}:${dateKey}:${direction}:${quantityType}`;
+    const key = `${normalizeUpc(entry.productId)}:${dateKey}:adjustment:${direction}:${quantityType}`;
     const existing = groups.get(key) || {
+      eventType,
       direction,
       quantityType,
       total: 0,
@@ -2418,7 +2516,7 @@ async function openInventoryHistory(product) {
   const groups = groupedHistoryForProduct(product.id);
   const listHtml = groups.length
     ? `<ul class="history-list">${groups.map(group => `
-        <li><strong>${formatNumber(group.total)}</strong> ${historyQuantityLabel(group.quantityType, group.total)} ${group.direction} on ${formatHistoryDateTime(group.latestAt)}</li>
+        <li>${historyGroupText(group)}</li>
       `).join("")}</ul>`
     : `<div class="empty-state">No inventory changes recorded in the last 14 days.</div>`;
   dom.historyModalBody.innerHTML = `
@@ -2923,6 +3021,18 @@ function formatHistoryDateTime(value) {
 function historyQuantityLabel(quantityType, amount) {
   const singular = quantityType === "case" ? "case" : "unit";
   return Number(amount) === 1 ? singular : `${singular}s`;
+}
+
+function historyGroupText(group) {
+  if (group.eventType === "transfer") {
+    const directionText = group.transferDirection === "front_to_back"
+      ? "from front stock to backstock"
+      : "from backstock to front stock";
+    const cases = Math.max(1, Number(group.caseQuantity || 0));
+    const units = Math.max(1, Number(group.totalUnitEquivalent || group.unitEquivalent || 0));
+    return `<strong>${formatNumber(cases)}</strong> ${historyQuantityLabel("case", cases)} moved ${directionText} on ${formatHistoryDateTime(group.latestAt)} <span class="small-muted">(${formatNumber(units)} ${historyQuantityLabel("unit", units)})</span>`;
+  }
+  return `<strong>${formatNumber(group.total)}</strong> ${historyQuantityLabel(group.quantityType, group.total)} ${group.direction} on ${formatHistoryDateTime(group.latestAt)}`;
 }
 
 function fileTimestamp() {

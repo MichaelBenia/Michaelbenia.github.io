@@ -25,7 +25,11 @@ create table if not exists inventory_adjustment_history (
   created_at timestamptz not null default now(),
   user_id uuid null,
   user_name text null,
-  source text null default 'manual_adjustment'
+  source text null default 'manual_adjustment',
+  event_type text not null default 'adjustment',
+  transfer_direction text null,
+  case_quantity integer null,
+  unit_equivalent integer null
 );
 
 create table if not exists global_product_sale_status (
@@ -40,6 +44,18 @@ create table if not exists global_product_sale_status (
 
 alter table inventory_adjustment_history
 add column if not exists quantity_type text not null default 'unit';
+
+alter table inventory_adjustment_history
+add column if not exists event_type text not null default 'adjustment';
+
+alter table inventory_adjustment_history
+add column if not exists transfer_direction text null;
+
+alter table inventory_adjustment_history
+add column if not exists case_quantity integer null;
+
+alter table inventory_adjustment_history
+add column if not exists unit_equivalent integer null;
 
 alter table store_app_state enable row level security;
 alter table stores enable row level security;
