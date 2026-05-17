@@ -639,25 +639,33 @@ async function saveSupabaseStoreState(storeNumber, appState) {
 
 async function insertSupabaseInventoryHistory(entry) {
   const storeNumber = selectedSupabaseStoreNumber();
-  if (!storeNumber) return;
+  if (!storeNumber) return false;
+  const payload = {
+    store_number: storeNumber,
+    product_id: entry.productId,
+    product_name: entry.productName,
+    change_amount: entry.changeAmount || 0,
+    quantity_type: entry.quantityType || "unit",
+    created_at: entry.createdAt,
+    user_name: entry.userName || null,
+    source: entry.source || "manual_adjustment",
+    event_type: entry.eventType || "adjustment",
+    transfer_direction: entry.transferDirection || null,
+    case_quantity: entry.caseQuantity ?? null,
+    unit_equivalent: entry.unitEquivalent ?? null,
+  };
   try {
     const supabase = await getSupabaseClient();
-    let { error } = await supabase
+    if ((entry.eventType || "adjustment") === "transfer") {
+      console.log("Inserting transfer history:", payload);
+    }
+    let { data, error } = await supabase
       .from("inventory_adjustment_history")
-      .insert({
-        store_number: storeNumber,
-        product_id: entry.productId,
-        product_name: entry.productName,
-        change_amount: entry.changeAmount || 0,
-        quantity_type: entry.quantityType || "unit",
-        created_at: entry.createdAt,
-        user_name: entry.userName || null,
-        source: entry.source || "manual_adjustment",
-        event_type: entry.eventType || "adjustment",
-        transfer_direction: entry.transferDirection || null,
-        case_quantity: entry.caseQuantity ?? null,
-        unit_equivalent: entry.unitEquivalent ?? null,
-      });
+      .insert(payload)
+      .select("id");
+    if ((entry.eventType || "adjustment") === "transfer") {
+      console.log("Transfer history insert result:", { data, error });
+    }
     if (error && String(error.message || "").includes("column")) {
       console.warn("Inventory history transfer columns are missing. Run docs/supabase-setup.sql to enable transfer history rows.", error);
       if ((entry.eventType || "adjustment") === "adjustment") {
@@ -672,13 +680,17 @@ async function insertSupabaseInventoryHistory(entry) {
             created_at: entry.createdAt,
             user_name: entry.userName || null,
             source: entry.source || "manual_adjustment",
-          });
+          })
+          .select("id");
+        data = fallback.data;
         error = fallback.error;
       }
     }
     if (error) throw error;
+    return true;
   } catch (error) {
     console.error("Inventory history insert failed:", error);
+    return false;
   }
 }
 
@@ -1991,8 +2003,8 @@ function inventoryRowHtml(product) {
     <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
     <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
     <td class="center-cell row-actions">
-      <button class="icon-action" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit SKU and description" aria-label="Edit ${escapeHtml(product.name)}">&#9998;</button>
-      <button class="icon-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete inventory item" aria-label="Delete ${escapeHtml(product.name)}">&#128465;</button>
+      <button class="icon-action edit-icon" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}</button>
+      <button class="icon-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}</button>
     </td>
   </tr>`;
 }
@@ -2203,14 +2215,16 @@ async function transferCase(product, direction) {
     });
     const saved = await saveInventoryMutationToSupabase({ silent: true });
     if (!saved) throw new Error("Inventory transfer was not saved to Supabase.");
-    commitInventoryAdjustment(createInventoryTransfer(product, direction, caseSize));
+    const historySaved = await commitInventoryAdjustment(createInventoryTransfer(product, direction, caseSize), { warnOnFailure: true });
     saveLocalBackup();
     scheduleSupabaseSave();
     const message = direction === "back_to_front"
       ? "Moved 1 case to front stock."
       : "Moved 1 case to backstock.";
-    setStatus(`${message} Total inventory is unchanged.`);
-    showToast(message);
+    if (historySaved) {
+      setStatus(`${message} Total inventory is unchanged.`);
+      showToast(message);
+    }
     return true;
   } catch (error) {
     console.error("Inventory transfer save failed:", error);
@@ -2387,6 +2401,20 @@ function moveProcessingSku(oldSku, newSku) {
   }
 }
 
+function actionIcon(name) {
+  if (name === "trash") {
+    return `<svg class="row-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M9 3h6l1 2h4v2H4V5h4l1-2Z"></path>
+      <path d="M6 9h12l-1 12H7L6 9Z"></path>
+      <path d="M10 11v7M14 11v7"></path>
+    </svg>`;
+  }
+  return `<svg class="row-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+    <path d="M4 17.5V20h2.5L17.8 8.7l-2.5-2.5L4 17.5Z"></path>
+    <path d="M18.8 7.7 16.3 5.2l1.2-1.2a1.8 1.8 0 0 1 2.5 0l.1.1a1.8 1.8 0 0 1 0 2.5l-1.3 1.1Z"></path>
+  </svg>`;
+}
+
 function historyButton(product) {
   return `<button class="info-icon-button" data-action="showHistory" data-id="${escapeHtml(product.id)}" title="Inventory history" aria-label="Inventory history for ${escapeHtml(product.name)}">i</button>`;
 }
@@ -2423,10 +2451,16 @@ function createInventoryAdjustment(product, changeAmount, quantityTypeOrSource =
   };
 }
 
-function commitInventoryAdjustment(entry) {
-  if (!entry) return;
+async function commitInventoryAdjustment(entry, { warnOnFailure = false } = {}) {
+  if (!entry) return false;
   state.inventoryHistory = [entry, ...(state.inventoryHistory || [])].slice(0, 5000);
-  insertSupabaseInventoryHistory(entry);
+  saveLocalBackup();
+  const inserted = await insertSupabaseInventoryHistory(entry);
+  if (!inserted && warnOnFailure) {
+    setStatus("Transfer saved, but history could not be recorded.", true);
+    showToast("Transfer saved, but history could not be recorded.");
+  }
+  return inserted;
 }
 
 function recordInventoryAdjustment(product, changeAmount, source = "manual_adjustment") {
