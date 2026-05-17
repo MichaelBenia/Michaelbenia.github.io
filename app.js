@@ -2103,8 +2103,8 @@ async function transferCase(product, direction) {
     nextFrontUnits = currentFrontUnits + caseSize;
   } else if (direction === "front_to_back") {
     if (currentFrontUnits < caseSize) {
-      showToast("Not enough front stock units to make a full case.");
-      setStatus("Not enough front stock units to make a full case.", true);
+      showToast("You need a full case in front stock to move it back to backstock.");
+      setStatus("You need a full case in front stock to move it back to backstock.", true);
       return false;
     }
     nextBackstockCases = currentBackstockCases + 1;
@@ -2653,8 +2653,8 @@ function transferControl(product) {
   const backToFrontDisabled = isSaving || backstockCases <= 0;
   const frontToBackDisabled = isSaving || frontUnits < caseSize;
   return `<span class="transfer-control" title="1 case = ${caseSize} units">
-    <button class="transfer-button" data-action="transferCase" data-direction="back_to_front" data-id="${escapeHtml(product.id)}" ${backToFrontDisabled ? "disabled" : ""} title="Move 1 case to front stock" aria-label="Move 1 case from backstock to front stock">&#8594;</button>
-    <button class="transfer-button" data-action="transferCase" data-direction="front_to_back" data-id="${escapeHtml(product.id)}" ${frontToBackDisabled ? "disabled" : ""} title="Move 1 case to backstock" aria-label="Move 1 case from front stock to backstock">&#8592;</button>
+    <button class="transfer-button" data-action="transferCase" data-direction="back_to_front" data-id="${escapeHtml(product.id)}" ${backToFrontDisabled ? "disabled" : ""} title="Move 1 case to front stock" aria-label="Move 1 case from backstock to front stock">&#9654;</button>
+    <button class="transfer-button" data-action="transferCase" data-direction="front_to_back" data-id="${escapeHtml(product.id)}" ${frontToBackDisabled ? "disabled" : ""} title="Move 1 case to backstock" aria-label="Move 1 case from front stock to backstock">&#9664;</button>
   </span>`;
 }
 
@@ -2688,7 +2688,7 @@ function unitsPerCaseForProduct(product) {
   const parsedFromText = parseCaseSize(`${product?.pack || ""} ${product?.name || ""}`);
   if (parsedFromText) return parsedFromText;
 
-  console.warn("Missing case size for product, defaulting to 12:", product);
+  console.warn("Missing case size for product, defaulting to 12", product);
   return 12;
 }
 

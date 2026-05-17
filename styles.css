@@ -529,34 +529,38 @@ tr.sale-item-row .sale-badge {
 
 .transfer-control {
   display: inline-grid;
-  grid-template-columns: 28px 28px;
+  grid-template-columns: 40px 40px;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-width: 62px;
+  gap: 7px;
+  min-width: 88px;
 }
 
 .transfer-button {
-  width: 28px;
-  height: 26px;
-  border: 1px solid #bca3ec;
-  border-radius: 8px;
-  background: #f8f3ff;
+  width: 40px;
+  height: 34px;
+  border: 2px solid #9f7ee4;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbf8ff 0%, #eadfff 100%);
   color: var(--primary-dark);
-  font-size: 0.9rem;
+  font-size: 1.16rem;
   font-weight: 950;
   line-height: 1;
   cursor: pointer;
+  box-shadow: 0 2px 5px rgba(68, 33, 135, 0.14);
 }
 
 .transfer-button:hover:not(:disabled) {
   border-color: var(--primary);
   background: var(--primary-soft);
+  transform: translateY(-1px);
 }
 
 .transfer-button:disabled {
   opacity: 0.42;
   cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .small-number {
