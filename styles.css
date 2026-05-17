@@ -372,6 +372,11 @@ h2 {
   display: none;
 }
 
+.inventory-sale-filter {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .metric {
   min-width: 92px;
   padding: 8px 10px;
@@ -921,6 +926,11 @@ tr.sale-item-row .sale-badge {
   .inventory-search {
     max-width: none;
     flex-basis: 100%;
+  }
+
+  .inventory-sale-filter {
+    flex-basis: 100%;
+    justify-content: center;
   }
 
   .metric {

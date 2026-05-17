@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#6431ca" />
     <title>Wine Order Count</title>
-    <link rel="stylesheet" href="styles.css?v=20260517-search-fields-fix" />
+    <link rel="stylesheet" href="styles.css?v=20260517-sale-toggle-next-to-search" />
   </head>
   <body>
     <div class="app-shell">
@@ -63,6 +63,10 @@
                 <input id="inventorySearchInput" type="search" placeholder="Search" autocomplete="off" />
                 <button id="clearInventorySearchButton" type="button" title="Clear inventory search" aria-label="Clear inventory search">×</button>
               </div>
+              <label class="toolbar-toggle inventory-sale-filter" title="Show only products currently marked as on sale.">
+                <input id="saleOnlyToggle" type="checkbox" />
+                Show Only Sale Items
+              </label>
               <div id="inventorySummary" class="summary-grid"></div>
             </div>
           </div>
@@ -111,10 +115,6 @@
               <button id="exportOrdersButton" class="secondary-button">
                 Export Order List
               </button>
-              <label class="toolbar-toggle" title="Show only products currently marked as on sale.">
-                <input id="saleOnlyToggle" type="checkbox" />
-                Show Only Sale Items
-              </label>
             </section>
             <section class="card">
               <h2>Data Management</h2>
@@ -212,7 +212,7 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260517-search-fields-fix"></script>
-    <script src="app.js?v=20260517-search-fields-fix"></script>
+    <script src="catalog.js?v=20260517-sale-toggle-next-to-search"></script>
+    <script src="app.js?v=20260517-sale-toggle-next-to-search"></script>
   </body>
 </html>
