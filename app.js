@@ -1995,14 +1995,61 @@ function renderInventoryTable() {
 }
 
 function filterInventoryProductsBySearch(products) {
-  const query = cleanText(state.settings.inventorySearch || "").toLowerCase();
+  const query = normalizeSearchText(state.settings.inventorySearch || "");
+  const compactQuery = compactSearchText(query);
   if (!query) return products;
   return products.filter(product => {
-    const sku = String(product.id || "").toLowerCase();
-    const sourceSku = String(product.sourceSku || "").toLowerCase();
-    const name = String(product.name || "").toLowerCase();
-    return sku.includes(query) || sourceSku.includes(query) || name.includes(query);
+    const searchableText = inventorySearchableText(product);
+    return searchableText.normalized.includes(query) || searchableText.compact.includes(compactQuery);
   });
+}
+
+function inventorySearchableText(product) {
+  const catalogProduct = skuToProductMap.get(normalizeUpc(product?.sourceSku))
+    || skuToProductMap.get(normalizeUpc(product?.id));
+  const recommendation = (state.processing.recommendations || []).find(item => {
+    const itemId = normalizeUpc(item.id);
+    return itemId === normalizeUpc(product?.id) || itemId === normalizeUpc(product?.sourceSku);
+  });
+  const values = [
+    product?.id,
+    product?.sku,
+    product?.sourceSku,
+    product?.item_number,
+    product?.itemNumber,
+    product?.lcbo_number,
+    product?.lcboNumber,
+    product?.product_id,
+    product?.productId,
+    product?.name,
+    product?.product_name,
+    product?.productName,
+    product?.description,
+    catalogProduct?.sku,
+    catalogProduct?.description,
+    product?.size,
+    product?.bottle_size,
+    product?.bottleSize,
+    product?.volume,
+    product?.format,
+    product?.case_size,
+    product?.caseSize,
+    product?.pack_size,
+    product?.packSize,
+    product?.units_per_case,
+    product?.unitsPerCase,
+    product?.pack,
+    product?.overrideCases,
+    recommendation?.unitsPerCase,
+    recommendation?.pack,
+    recommendation?.name,
+    recommendation?.description,
+  ].filter(value => value !== null && value !== undefined && value !== "");
+  const normalized = normalizeSearchText(values.join(" "));
+  return {
+    normalized,
+    compact: compactSearchText(normalized),
+  };
 }
 
 function inventoryRowHtml(product) {
@@ -2939,6 +2986,14 @@ function normalizeHeader(value) {
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizeSearchText(value) {
+  return cleanText(value).toLowerCase();
+}
+
+function compactSearchText(value) {
+  return normalizeSearchText(value).replace(/[^a-z0-9.]+/g, "");
 }
 
 function compactHeader(value) {
