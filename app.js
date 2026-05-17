@@ -2003,8 +2003,8 @@ function inventoryRowHtml(product) {
     <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
     <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
     <td class="center-cell row-actions">
-      <button class="icon-action labeled-action edit-icon" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}<span>Edit</span></button>
-      <button class="icon-action labeled-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}<span>Delete</span></button>
+      <button class="icon-action edit-icon" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}</button>
+      <button class="icon-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}</button>
     </td>
   </tr>`;
 }

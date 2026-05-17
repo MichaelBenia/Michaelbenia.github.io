@@ -596,12 +596,7 @@ tr.sale-item-row .sale-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 0 10px;
-}
-
-.labeled-action {
-  min-width: 82px;
+  padding: 0;
 }
 
 .row-action-icon {
@@ -613,11 +608,6 @@ tr.sale-item-row .sale-badge {
   stroke-linecap: round;
   stroke-linejoin: round;
   flex: 0 0 auto;
-}
-
-.icon-action span {
-  font-size: 0.76rem;
-  font-weight: 950;
 }
 
 .edit-icon {
