@@ -64,6 +64,24 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-width: 0;
+}
+
+.app-icon {
+  width: clamp(48px, 8vw, 72px);
+  height: clamp(48px, 8vw, 72px);
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: white;
+  box-shadow: 0 8px 20px rgba(63, 32, 119, 0.14);
+  object-fit: contain;
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: var(--primary);

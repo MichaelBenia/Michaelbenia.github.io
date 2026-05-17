@@ -1,10 +1,11 @@
-const CACHE_NAME = "wine-order-count-static-v26";
+const CACHE_NAME = "wine-order-count-static-v27";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./catalog.js",
   "./app.js",
+  "./images.ico",
   "./xlsx.full.min.js",
 ];
 
