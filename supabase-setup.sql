@@ -70,6 +70,7 @@ drop policy if exists "Allow public store insert" on stores;
 drop policy if exists "Allow public store update" on stores;
 drop policy if exists "Allow public inventory history read" on inventory_adjustment_history;
 drop policy if exists "Allow public inventory history insert" on inventory_adjustment_history;
+drop policy if exists "Allow public inventory history delete" on inventory_adjustment_history;
 drop policy if exists "Allow public global sale read" on global_product_sale_status;
 drop policy if exists "Allow public global sale insert" on global_product_sale_status;
 drop policy if exists "Allow public global sale update" on global_product_sale_status;
@@ -116,6 +117,11 @@ on inventory_adjustment_history
 for insert
 with check (true);
 
+create policy "Allow public inventory history delete"
+on inventory_adjustment_history
+for delete
+using (true);
+
 create policy "Allow public global sale read"
 on global_product_sale_status
 for select
@@ -134,7 +140,7 @@ with check (true);
 
 grant select, insert, update on store_app_state to anon, authenticated;
 grant select, insert, update on stores to anon, authenticated;
-grant select, insert on inventory_adjustment_history to anon, authenticated;
+grant select, insert, delete on inventory_adjustment_history to anon, authenticated;
 grant select, insert, update on global_product_sale_status to anon, authenticated;
 
 create index if not exists inventory_adjustment_history_store_product_created_idx

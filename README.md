@@ -77,6 +77,8 @@ If a device seems stuck on old JavaScript, use **Settings > Clear App Cache**. T
 
 Inventory count changes are also recorded in `inventory_adjustment_history` and shown from each product row's small circular **i** button. The popup groups additions and removals from the last 14 days by product, date, direction, and quantity type, so Front units and Backstock cases stay separate. Backstock/Front case transfers are stored as `event_type = 'transfer'` rows with `transfer_direction`, `case_quantity`, and `unit_equivalent`, so they appear as movement events instead of normal added/removed inventory.
 
+Use **Settings > Inventory Tools > Clear Stock History** to remove only stock addition/deduction history for the currently selected store. Inventory counts, sale flags, products, uploads, other stores, and `event_type = 'transfer'` case movement history are kept.
+
 ### Supabase Setup SQL
 
 Run the SQL in `supabase-setup.sql` in your Supabase SQL editor.

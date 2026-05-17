@@ -77,6 +77,7 @@ const dom = {
   makeDefaultStoreButton: document.getElementById("makeDefaultStoreButton"),
   clearDefaultStoreButton: document.getElementById("clearDefaultStoreButton"),
   clearSalesButton: document.getElementById("clearSalesButton"),
+  clearStockHistoryButton: document.getElementById("clearStockHistoryButton"),
   clearInventoryButton: document.getElementById("clearInventoryButton"),
   clearSaleFlagsButton: document.getElementById("clearSaleFlagsButton"),
   restoreDeletedItemsButton: document.getElementById("restoreDeletedItemsButton"),
@@ -105,6 +106,7 @@ let supabaseClientPromise = null;
 let currentStoreChannel = null;
 let currentSaleStatusChannel = null;
 let saleClearInProgress = false;
+let stockHistoryClearInProgress = false;
 
 bindEvents();
 render();
@@ -1238,6 +1240,7 @@ function bindEvents() {
   dom.clearDefaultStoreButton.addEventListener("click", clearDefaultStore);
   dom.applyDeductionButton.addEventListener("click", applySalesDeduction);
   dom.clearSalesButton.addEventListener("click", clearSalesData);
+  dom.clearStockHistoryButton.addEventListener("click", clearStockHistoryForCurrentStore);
   dom.clearInventoryButton.addEventListener("click", clearInventoryCounts);
   dom.clearSaleFlagsButton.addEventListener("click", clearAllSaleFlags);
   dom.restoreDeletedItemsButton.addEventListener("click", restoreDeletedInventoryItems);
@@ -2736,6 +2739,75 @@ function clearInventoryCounts() {
   saveState();
   setStatus("Inventory counts cleared.");
   showToast("Inventory count data cleared.");
+}
+
+async function clearStockHistoryForCurrentStore() {
+  const storeNumber = selectedSupabaseStoreNumber();
+  if (!storeNumber) {
+    showToast("Select or add a store before clearing stock history.");
+    setStatus("Select or add a store before clearing stock history.", true);
+    return;
+  }
+  if (stockHistoryClearInProgress) return;
+  const confirmed = confirm("Clear Stock History?\n\nThis will remove stock addition and deduction history for the currently selected store only. Inventory counts will not be changed.");
+  if (!confirmed) return;
+
+  stockHistoryClearInProgress = true;
+  dom.clearStockHistoryButton.disabled = true;
+  setStatus("Clearing history...");
+  console.log("Clearing stock history for store:", storeNumber);
+
+  const previousHistory = [...(state.inventoryHistory || [])];
+  try {
+    state.inventoryHistory = previousHistory.filter(entry => !isCurrentStoreStockAdjustment(entry, storeNumber));
+    saveLocalBackup();
+    await clearSupabaseStockAdjustmentHistory(storeNumber);
+    await saveStateNowToSupabase({ successMessage: "Stock history cleared for this store.", silent: true });
+    closeInventoryHistory();
+    render();
+    setStatus("Stock history cleared for this store.");
+    showToast("Stock history cleared for this store.");
+  } catch (error) {
+    state.inventoryHistory = previousHistory;
+    saveLocalBackup();
+    console.error("Could not clear stock history:", error);
+    setStatus("Could not clear stock history.", true);
+    showToast("Could not clear stock history.");
+  } finally {
+    stockHistoryClearInProgress = false;
+    dom.clearStockHistoryButton.disabled = false;
+  }
+}
+
+function isCurrentStoreStockAdjustment(entry, storeNumber) {
+  const entryStore = cleanText(entry.storeNumber || storeNumber);
+  if (entryStore !== cleanText(storeNumber)) return false;
+  return (entry.eventType || "adjustment") !== "transfer";
+}
+
+async function clearSupabaseStockAdjustmentHistory(storeNumber) {
+  const supabase = await getSupabaseClient();
+  let { data, error } = await supabase
+    .from("inventory_adjustment_history")
+    .delete()
+    .eq("store_number", storeNumber)
+    .eq("event_type", "adjustment")
+    .select("id");
+
+  if (error && String(error.message || "").includes("event_type")) {
+    const fallback = await supabase
+      .from("inventory_adjustment_history")
+      .delete()
+      .eq("store_number", storeNumber)
+      .is("transfer_direction", null)
+      .select("id");
+    data = fallback.data;
+    error = fallback.error;
+  }
+
+  console.log("Clear stock history result:", { data, error });
+  if (error) throw error;
+  return data || [];
 }
 
 async function clearAllSaleFlags() {
