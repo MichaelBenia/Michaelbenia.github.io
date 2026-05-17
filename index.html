@@ -7,7 +7,7 @@
     <title>Wine Inventory</title>
     <link rel="icon" href="images.ico" type="image/x-icon" />
     <link rel="shortcut icon" href="images.ico" type="image/x-icon" />
-    <link rel="stylesheet" href="styles.css?v=20260517-nav-fix" />
+    <link rel="stylesheet" href="styles.css?v=20260517-add-product" />
   </head>
   <body>
     <div class="app-shell">
@@ -70,6 +70,9 @@
                 <input id="saleOnlyToggle" type="checkbox" />
                 Show Only Sale Items
               </label>
+              <button id="addProductButton" class="secondary-button">
+                Add Product
+              </button>
               <div id="inventorySummary" class="summary-grid"></div>
             </div>
           </div>
@@ -103,6 +106,18 @@
 
         <section id="settingsTab" class="tab-panel">
           <div class="settings-grid">
+            <section class="card">
+              <h2>Store Tools</h2>
+              <button id="settingsReloadStoreButton" class="secondary-button">
+                Reload Store Data
+              </button>
+              <button id="helpGuideButton" class="secondary-button">
+                Help & User Guide
+              </button>
+              <p class="small-muted">
+                View instructions, troubleshooting, and app feature explanations.
+              </p>
+            </section>
             <section class="card">
               <h2>Inventory Tools</h2>
               <input id="inventoryFileInput" type="file" accept=".xlsx,.csv" hidden />
@@ -172,15 +187,6 @@
               </p>
             </section>
             <section class="card">
-              <h2>Help & User Guide</h2>
-              <p class="small-muted">
-                View instructions, troubleshooting, and app feature explanations.
-              </p>
-              <button id="helpGuideButton" class="secondary-button">
-                Help & User Guide
-              </button>
-            </section>
-            <section class="card">
               <h2>Default Store</h2>
               <div class="default-store-display">
                 <span>Current store</span>
@@ -227,7 +233,7 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260517-nav-fix"></script>
-    <script src="app.js?v=20260517-nav-fix"></script>
+    <script src="catalog.js?v=20260517-add-product"></script>
+    <script src="app.js?v=20260517-add-product"></script>
   </body>
 </html>

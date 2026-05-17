@@ -3,6 +3,8 @@ const STORE_STORAGE_PREFIX = "wineAppState_store";
 const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
 const DEFAULT_STORE_KEY = "defaultStoreNumber";
 const UNSELECTED_STORE_CACHE_KEY = "__unselected__";
+const GLOBAL_CUSTOM_PRODUCTS_KEY = "wine-order-count-global-custom-products-v1";
+const GLOBAL_PRODUCT_STORE_NUMBER = "__global_product_catalog__";
 const SUPABASE_SAVE_DEBOUNCE_MS = 750;
 const SUPABASE_URL = "https://bhuwrwqkwuuzjomskjky.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_iiViQ666fswJ84JaNeNIiw_pHHWR_8A";
@@ -53,12 +55,14 @@ const dom = {
   addStoreButton: document.getElementById("addStoreButton"),
   refreshStoresButton: document.getElementById("refreshStoresButton"),
   reloadStoreButton: document.getElementById("reloadStoreButton"),
+  settingsReloadStoreButton: document.getElementById("settingsReloadStoreButton"),
   currentStoreText: document.getElementById("currentStoreText"),
   syncStatusText: document.getElementById("syncStatusText"),
   saveProgressButton: document.getElementById("saveProgressButton"),
   exportInventoryButton: document.getElementById("exportInventoryButton"),
   exportOrdersButton: document.getElementById("exportOrdersButton"),
   settingsButton: document.getElementById("settingsButton"),
+  addProductButton: document.getElementById("addProductButton"),
   statusBanner: document.getElementById("statusBanner"),
   lastSavedText: document.getElementById("lastSavedText"),
   inventorySearchInput: document.getElementById("inventorySearchInput"),
@@ -94,6 +98,7 @@ const dom = {
 
 let storeRegistry = loadStoreRegistry();
 let currentStoreNumber = storeRegistry.currentStore;
+let globalCustomProducts = loadLocalGlobalCustomProducts();
 let globalSaleFlags = {};
 let globalSaleTableAvailable = true;
 let state = defaultState();
@@ -137,6 +142,47 @@ function defaultState() {
     settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false, inventorySearch: "" },
     lastSaved: null,
   };
+}
+
+function loadLocalGlobalCustomProducts() {
+  try {
+    return normalizeCustomProducts(JSON.parse(localStorage.getItem(GLOBAL_CUSTOM_PRODUCTS_KEY) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalGlobalCustomProducts() {
+  localStorage.setItem(GLOBAL_CUSTOM_PRODUCTS_KEY, JSON.stringify(globalCustomProducts));
+}
+
+function normalizeCustomProducts(products = []) {
+  const seen = new Set();
+  return (products || [])
+    .map((product, index) => {
+      const sku = normalizeUpc(product?.sku || product?.id || product?.sourceSku);
+      const description = cleanText(product?.description || product?.name || product?.productName);
+      if (!sku || !description || seen.has(sku)) return null;
+      seen.add(sku);
+      const category = CATEGORY_ORDER.includes(product?.category) ? product.category : "Other Products";
+      return {
+        sku,
+        description,
+        category,
+        orderIndex: Number.isFinite(Number(product?.orderIndex)) ? Number(product.orderIndex) : index,
+        createdAt: product?.createdAt || new Date().toISOString(),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aCategory = CATEGORY_ORDER.indexOf(a.category);
+      const bCategory = CATEGORY_ORDER.indexOf(b.category);
+      const aCategoryOrder = aCategory >= 0 ? aCategory : 99;
+      const bCategoryOrder = bCategory >= 0 ? bCategory : 99;
+      if (aCategoryOrder !== bCategoryOrder) return aCategoryOrder - bCategoryOrder;
+      if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
+      return a.description.localeCompare(b.description);
+    });
 }
 
 function loadStoreRegistry() {
@@ -241,7 +287,8 @@ async function loadSupabaseStores() {
   const stores = [...new Set([
     ...(storeRows || []).map(row => cleanText(row.store_number)),
     ...(appStateRows || []).map(row => cleanText(row.store_number)),
-  ].filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  ].filter(storeNumber => storeNumber && !isInternalStoreNumber(storeNumber)))]
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   console.log("Stores loaded:", stores);
   return stores;
 }
@@ -253,6 +300,54 @@ async function upsertSupabaseStore(storeNumber) {
     .from("stores")
     .upsert({
       store_number: String(storeNumber),
+      updated_at: updatedAt,
+    });
+  if (error) throw error;
+}
+
+function isInternalStoreNumber(storeNumber) {
+  const text = cleanText(storeNumber);
+  return text === GLOBAL_PRODUCT_STORE_NUMBER || /^__.*__$/.test(text);
+}
+
+async function loadGlobalCustomProductsFromCloud() {
+  const remoteState = await getSupabaseStoreState(GLOBAL_PRODUCT_STORE_NUMBER);
+  return normalizeCustomProducts(remoteState?.customProducts || remoteState?.products || []);
+}
+
+async function refreshGlobalCustomProducts({ silent = false } = {}) {
+  try {
+    const remoteProducts = await withTimeout(loadGlobalCustomProductsFromCloud(), 7000, "Product list loading timed out");
+    if (remoteProducts.length || !globalCustomProducts.length) {
+      globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, ...remoteProducts]);
+      saveLocalGlobalCustomProducts();
+    }
+    state.inventory.products = mergeProductsWithCatalog(state.inventory?.products || [], state);
+    if (!silent) {
+      render();
+      showToast("Product list refreshed.");
+    }
+    return true;
+  } catch (error) {
+    console.warn("Shared product list could not be loaded; using local product list.", error);
+    globalCustomProducts = loadLocalGlobalCustomProducts();
+    state.inventory.products = mergeProductsWithCatalog(state.inventory?.products || [], state);
+    return false;
+  }
+}
+
+async function saveGlobalCustomProductsToCloud() {
+  saveLocalGlobalCustomProducts();
+  const supabase = await getSupabaseClient();
+  const updatedAt = new Date().toISOString();
+  const { error } = await supabase
+    .from("store_app_state")
+    .upsert({
+      store_number: GLOBAL_PRODUCT_STORE_NUMBER,
+      app_state: {
+        customProducts: globalCustomProducts,
+        updatedAt,
+      },
       updated_at: updatedAt,
     });
   if (error) throw error;
@@ -817,8 +912,27 @@ function catalogProducts(meta = {}) {
     onSale: globalSaleStatusForProduct({ sourceSku: product.sku, id: overrides[normalizeUpc(product.sku)]?.sku || product.sku }, false),
     isCatalogProduct: true,
   })).filter(product => !deleted.has(product.sourceSku));
-  applyGlobalSaleFlagsToProducts(products);
-  return products;
+  const customProducts = globalCustomProducts
+    .filter(product => !deleted.has(normalizeUpc(product.sku)))
+    .map(product => ({
+      id: normalizeUpc(overrides[normalizeUpc(product.sku)]?.sku || product.sku),
+      sourceSku: normalizeUpc(product.sku),
+      name: cleanText(overrides[normalizeUpc(product.sku)]?.description || product.description),
+      category: product.category || "Other Products",
+      quantity: 0,
+      originalQuantity: 0,
+      backstock: 0,
+      originalBackstock: 0,
+      lastUpdated: null,
+      notes: "",
+      overrideCases: "",
+      onSale: globalSaleStatusForProduct({ sourceSku: product.sku, id: overrides[normalizeUpc(product.sku)]?.sku || product.sku }, false),
+      isCatalogProduct: false,
+      isCustomProduct: true,
+    }));
+  const combined = [...products, ...customProducts];
+  applyGlobalSaleFlagsToProducts(combined);
+  return combined;
 }
 
 function mergeProductsWithCatalog(products, meta = state) {
@@ -840,7 +954,17 @@ function mergeProductsWithCatalog(products, meta = state) {
     bySource.set(sourceSku, normalized);
   }
 
-  const mergedCatalog = PRODUCT_CATALOG
+  const catalogSource = [
+    ...PRODUCT_CATALOG.map(product => ({ ...product, isCustomProduct: false })),
+    ...globalCustomProducts.map(product => ({
+      sku: product.sku,
+      description: product.description,
+      category: product.category || "Other Products",
+      isCustomProduct: true,
+    })),
+  ];
+
+  const mergedCatalog = catalogSource
     .filter(catalogProduct => !deleted.has(normalizeUpc(catalogProduct.sku)))
     .map(catalogProduct => {
     const sourceSku = normalizeUpc(catalogProduct.sku);
@@ -860,14 +984,17 @@ function mergeProductsWithCatalog(products, meta = state) {
       notes: existing?.notes || "",
       overrideCases: existing?.overrideCases ?? "",
       onSale: globalSaleStatusForProduct({ sourceSku, id, onSale: existing?.onSale }, existing?.onSale || false),
-      isCatalogProduct: true,
+      isCatalogProduct: catalogProduct.isCustomProduct !== true,
+      isCustomProduct: catalogProduct.isCustomProduct === true,
     };
   });
 
+  const globalCustomSkuSet = new Set(globalCustomProducts.map(product => normalizeUpc(product.sku)));
   const unknownProducts = [...byId.values()]
     .filter(product => {
       if (deleted.has(product.sourceSku) || deleted.has(product.id)) return false;
       if (skuToProductMap.has(product.sourceSku) || skuToProductMap.has(product.id)) return false;
+      if (globalCustomSkuSet.has(product.sourceSku) || globalCustomSkuSet.has(product.id)) return false;
       return true;
     })
     .map(product => ({
@@ -1187,6 +1314,7 @@ function serializeStateForSupabase() {
     importedSalesFileData: cleanState.sales || { sessions: [], activeSessionId: null },
     inventoryFileData: cleanState.inventory || { products: [] },
     productOverrides: cleanState.productOverrides || {},
+    customProducts: globalCustomProducts,
     productEdits: cleanState.productOverrides || {},
     editedSkus: Object.fromEntries(Object.entries(cleanState.productOverrides || {}).map(([sourceSku, override]) => [sourceSku, override?.sku || sourceSku])),
     editedDescriptions: Object.fromEntries(Object.entries(cleanState.productOverrides || {}).map(([sourceSku, override]) => [sourceSku, override?.description || ""])),
@@ -1203,12 +1331,17 @@ function serializeStateForSupabase() {
 }
 
 function hydrateStateFromRemote(remoteState, storeNumber) {
+  if (remoteState.customProducts?.length) {
+    globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, ...remoteState.customProducts]);
+    saveLocalGlobalCustomProducts();
+  }
   const base = {
     ...defaultState(),
     ...remoteState,
     storeNumber,
     productOverrides: remoteState.productOverrides || remoteState.productEdits || {},
     deletedItems: remoteState.deletedItems || [],
+    customProducts: remoteState.customProducts || [],
     skuAliases: remoteState.skuAliases || {},
     uploads: remoteState.uploads || {
       sales: remoteState.uploadedSalesData || null,
@@ -1261,6 +1394,7 @@ function bindEvents() {
   on(dom.addStoreButton, "click", addStore);
   on(dom.refreshStoresButton, "click", refreshStoresAndCurrentData);
   on(dom.reloadStoreButton, "click", reloadCurrentStoreData);
+  on(dom.settingsReloadStoreButton, "click", reloadCurrentStoreData);
   on(dom.uploadSalesButton, "click", () => dom.salesInput?.click());
   on(dom.uploadInventoryButton, "click", () => dom.inventoryInput?.click());
   on(dom.salesInput, "change", event => handleSalesFile(event.target.files?.[0]));
@@ -1269,6 +1403,7 @@ function bindEvents() {
   on(dom.exportInventoryButton, "click", exportInventoryCsv);
   on(dom.exportOrdersButton, "click", exportOrdersCsv);
   on(dom.settingsButton, "click", () => activateTab("settings"));
+  on(dom.addProductButton, "click", addProductToMainList);
   on(dom.makeDefaultStoreButton, "click", makeCurrentStoreDefault);
   on(dom.clearDefaultStoreButton, "click", clearDefaultStore);
   on(dom.applyDeductionButton, "click", applySalesDeduction);
@@ -1340,6 +1475,7 @@ function on(element, eventName, handler) {
 async function initializeSupabaseSync() {
   renderStoreSelector();
   try {
+    await refreshGlobalCustomProducts({ silent: true });
     const storesLoaded = await refreshStoresFromSupabase();
     if (!storesLoaded) {
       state = loadState(currentStoreNumber || "");
@@ -1367,6 +1503,7 @@ async function initializeSupabaseSync() {
 }
 
 async function refreshStoresAndCurrentData() {
+  await refreshGlobalCustomProducts({ silent: true });
   await refreshStoresFromSupabase({ showConfirmation: true });
   if (selectedSupabaseStoreNumber()) {
     await loadSelectedStoreFromSupabase();
@@ -1378,6 +1515,7 @@ async function reloadCurrentStoreData() {
     showToast("Select a store before reloading store data.");
     return;
   }
+  await refreshGlobalCustomProducts({ silent: true });
   await loadSelectedStoreFromSupabase();
 }
 
@@ -1625,6 +1763,7 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
     console.log("Selected store:", storeNumber);
     console.log("Loading inventory for store:", storeNumber);
     setSyncStatus(`Loading Store ${storeNumber}...`);
+    await refreshGlobalCustomProducts({ silent: true });
     await refreshGlobalSaleFlagsFromSupabase({ silent: true });
     const remoteState = await withTimeout(getSupabaseStoreState(storeNumber), 10000, "Inventory loading timed out");
     console.log("Loaded from Supabase store:", storeNumber, remoteState);
@@ -1852,29 +1991,48 @@ function recalculateRecommendations() {
     .filter(product => productCategoryInfo(product))
     .map(product => {
       const sales = salesById.get(product.id);
-      const unitsSold = sales?.unitsSold ?? 0;
-      const unitsPerCase = sales?.unitsPerCase || parseCaseSize(`${product.name}`) || 12;
-      const totalUnitsOnHand = (Number(product.backstock || 0) * unitsPerCase) + Number(product.quantity || 0);
-      const weeksOfProduct = unitsSold > 0 ? totalUnitsOnHand / unitsSold : null;
-      const netUnitsNeeded = Math.max(0, unitsSold - totalUnitsOnHand);
-      const calculatedCases = unitsSold > 0 ? Math.ceil(netUnitsNeeded / unitsPerCase) : 0;
+      const unitsSold = safeFiniteNumber(sales?.unitsSold, 0);
+      const frontUnits = stockQuantityNumber(product.quantity);
+      const backstockCases = stockQuantityNumber(product.backstock);
+      const caseSize = positiveFiniteNumber(sales?.unitsPerCase)
+        || positiveFiniteNumber(parseCaseSize(`${product.name}`));
+      const needsCaseSize = Number(backstockCases || 0) > 0;
+      const needsReview = frontUnits == null
+        || backstockCases == null
+        || !Number.isFinite(unitsSold)
+        || (needsCaseSize && !caseSize);
+      const totalUnitsOnHand = needsReview
+        ? null
+        : (backstockCases * (caseSize || 0)) + frontUnits;
+      const weeksInfo = orderingWeeksInfo({
+        averageWeeklySales: unitsSold,
+        totalUnitsOnHand,
+        needsReview,
+      });
+      const netUnitsNeeded = weeksInfo.type === "needs-review" ? 0 : Math.max(0, unitsSold - totalUnitsOnHand);
+      const calculatedCases = unitsSold > 0 && caseSize ? Math.ceil(netUnitsNeeded / caseSize) : 0;
       const overrideCases = product.overrideCases === "" || product.overrideCases == null
         ? null
         : Math.max(0, Number(product.overrideCases) || 0);
       const orderCases = overrideCases ?? calculatedCases;
-      const unitOrder = orderCases * unitsPerCase;
+      const unitOrder = caseSize ? orderCases * caseSize : 0;
       return {
         id: product.id,
         name: product.name,
         unitsSold,
-        unitsPerCase,
-        front: Number(product.quantity || 0),
-        backstock: Number(product.backstock || 0),
+        unitsPerCase: caseSize || null,
+        front: frontUnits ?? 0,
+        backstock: backstockCases ?? 0,
         totalUnitsOnHand,
-        weeksOfProduct,
+        weeksOfProduct: weeksInfo.value,
+        weeksOfProductLabel: weeksInfo.label,
+        weeksSortPriority: weeksInfo.sortPriority,
+        weeksStatus: weeksInfo.type,
         orderCases,
         unitOrder,
-        status: unitsSold <= 0 || (weeksOfProduct != null && weeksOfProduct >= 2)
+        status: weeksInfo.type === "needs-review"
+          ? "Needs Review"
+          : unitsSold <= 0 || (weeksInfo.value != null && weeksInfo.value >= 2)
           ? "Do Not Order"
           : "Order Needed",
         notes: product.notes || "",
@@ -1882,6 +2040,46 @@ function recalculateRecommendations() {
       };
     });
   render();
+}
+
+function positiveFiniteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+function safeFiniteNumber(value, fallback = null) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function stockQuantityNumber(value) {
+  if (value === null || value === undefined || value === "") return 0;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function orderingWeeksInfo({ averageWeeklySales, totalUnitsOnHand, needsReview = false }) {
+  const sales = safeFiniteNumber(averageWeeklySales, null);
+  const stock = safeFiniteNumber(totalUnitsOnHand, null);
+  if (needsReview || sales == null || stock == null || stock < 0 || sales < 0) {
+    return { type: "needs-review", value: null, label: "Needs review", sortPriority: 3 };
+  }
+  if (sales > 0) {
+    const weeks = stock / sales;
+    if (!Number.isFinite(weeks)) {
+      return { type: "needs-review", value: null, label: "Needs review", sortPriority: 3 };
+    }
+    return {
+      type: "calculated",
+      value: weeks,
+      label: `${weeks.toFixed(1)} weeks`,
+      sortPriority: 0,
+    };
+  }
+  if (stock > 0) {
+    return { type: "no-recent-sales", value: null, label: "No recent sales", sortPriority: 2 };
+  }
+  return { type: "no-sales-data", value: null, label: "No sales data", sortPriority: 1 };
 }
 
 async function parseFileRows(file) {
@@ -2168,8 +2366,8 @@ function renderOrderingTable() {
         <td>${escapeHtml(item.id)}</td>
         <td class="desc-cell product-name-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}${onSale ? saleBadge({ onSale: true }) : ""}</td>
         <td class="number-cell">${formatNumber(item.unitsSold)}</td>
-        <td class="number-cell">${formatNumber(item.totalUnitsOnHand)}</td>
-        <td class="number-cell">${item.weeksOfProduct == null ? "N/A" : item.weeksOfProduct.toFixed(1)}</td>
+        <td class="number-cell">${formatOrderingNumber(item.totalUnitsOnHand)}</td>
+        <td class="number-cell weeks-cell">${escapeHtml(formatWeeksOfStock(item))}</td>
         <td class="number-cell">${item.orderCases}</td>
         <td class="number-cell">${formatNumber(item.unitOrder)}</td>
         <td class="number-cell"><input class="small-number" type="number" min="0" data-field="overrideCases" data-id="${escapeHtml(item.id)}" value="${escapeHtml(item.overrideCases ?? "")}" /></td>
@@ -2502,11 +2700,84 @@ function restoreDeletedInventoryItems() {
   showToast("Deleted inventory items restored.");
 }
 
+async function addProductToMainList() {
+  await refreshGlobalCustomProducts({ silent: true });
+  const rawSku = prompt("Enter JDE/UPC/SKU for the new product:");
+  if (rawSku === null) return;
+  const sku = normalizeUpc(rawSku);
+  if (!sku) {
+    showToast("Enter a SKU/JDE/UPC before adding a product.");
+    return;
+  }
+  if (skuExistsOnAnotherProduct(sku, "")) {
+    showToast("That SKU already exists. Please use a different SKU.");
+    return;
+  }
+
+  const rawDescription = prompt("Enter product description:");
+  if (rawDescription === null) return;
+  const description = cleanText(rawDescription);
+  if (!description) {
+    showToast("Enter a product description before adding a product.");
+    return;
+  }
+
+  const categoryHelp = CATEGORY_ORDER.map((category, index) => `${index + 1}. ${category}`).join("\n");
+  const rawCategory = prompt(`Choose a category for this product:\n${categoryHelp}\n\nLeave blank for Other Products:`);
+  const category = normalizeCategoryChoice(rawCategory);
+  const orderIndex = globalCustomProducts.filter(product => product.category === category).length;
+  const product = {
+    sku,
+    description,
+    category,
+    orderIndex,
+    createdAt: new Date().toISOString(),
+  };
+
+  globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, product]);
+  state.deletedItems = (state.deletedItems || []).filter(item => normalizeUpc(item) !== sku);
+  state.inventory.products = mergeProductsWithCatalog(state.inventory.products, state);
+  refreshProcessingFromActiveSales();
+  saveLocalGlobalCustomProducts();
+  saveState();
+  render();
+
+  dom.addProductButton.disabled = true;
+  try {
+    await withTimeout(saveGlobalCustomProductsToCloud(), 10000, "Product list save timed out");
+    if (selectedSupabaseStoreNumber()) {
+      await saveStateNowToSupabase({ successMessage: "Product added", silent: true });
+    }
+    setStatus(`${sku} added to the main product list.`);
+    showToast("Product added to the main product list.");
+  } catch (error) {
+    console.error("Add product sync failed:", error);
+    setStatus("Product added on this device. Use Save Progress again when online.", true);
+    showToast("Product added on this device.");
+  } finally {
+    dom.addProductButton.disabled = false;
+  }
+}
+
+function normalizeCategoryChoice(value) {
+  const text = cleanText(value || "");
+  if (!text) return "Other Products";
+  const numericIndex = Number(text);
+  if (Number.isInteger(numericIndex) && numericIndex >= 1 && numericIndex <= CATEGORY_ORDER.length) {
+    return CATEGORY_ORDER[numericIndex - 1];
+  }
+  return CATEGORY_ORDER.find(category => category.toLowerCase() === text.toLowerCase()) || "Other Products";
+}
+
 function skuExistsOnAnotherProduct(sku, currentSourceSku) {
   const normalizedSku = normalizeUpc(sku);
   const normalizedSource = normalizeUpc(currentSourceSku);
   const catalogProduct = skuToProductMap.get(normalizedSku);
   if (catalogProduct && normalizeUpc(catalogProduct.sku) !== normalizedSource) return true;
+  if (globalCustomProducts.some(product => {
+    const customSku = normalizeUpc(product.sku);
+    return customSku === normalizedSku && customSku !== normalizedSource;
+  })) return true;
   return state.inventory.products.some(product => {
     const productSource = normalizeUpc(product.sourceSku || product.id);
     if (productSource === normalizedSource) return false;
@@ -2991,7 +3262,7 @@ async function clearAppCache() {
 }
 
 function openHelpGuide() {
-  window.open("help.pdf", "_blank", "noopener");
+  window.open("assets/help/user_guide.pdf", "_blank", "noopener");
 }
 
 function exportInventoryCsv() {
@@ -3017,8 +3288,8 @@ function exportOrdersCsv() {
       item.name,
       item.unitsSold,
       item.unitsPerCase,
-      item.totalUnitsOnHand,
-      item.weeksOfProduct == null ? "N/A" : item.weeksOfProduct.toFixed(1),
+      formatOrderingNumber(item.totalUnitsOnHand),
+      formatWeeksOfStock(item),
       item.orderCases,
       item.unitOrder,
       item.status,
@@ -3101,6 +3372,16 @@ function saleBadge(item) {
   return item?.onSale ? ` <span class="sale-badge">ON SALE</span>` : "";
 }
 
+function formatWeeksOfStock(item) {
+  const label = cleanText(item?.weeksOfProductLabel || "");
+  if (label) return label;
+  return orderingWeeksInfo({
+    averageWeeklySales: item?.unitsSold,
+    totalUnitsOnHand: item?.totalUnitsOnHand,
+    needsReview: item?.weeksStatus === "needs-review",
+  }).label;
+}
+
 function sortProducts(products) {
   return [...products].sort((a, b) => {
     const aOrder = productCategoryInfo(a);
@@ -3137,7 +3418,28 @@ function productCategoryInfo(productOrId) {
       globalIndex: fixed.globalIndex,
     };
   }
+  const customInfo = customProductCategoryInfo(sourceSku) || customProductCategoryInfo(directId);
+  if (customInfo) return customInfo;
   return categoryByUpc.get(sourceSku) || categoryByUpc.get(directId) || null;
+}
+
+function customProductCategoryInfo(sku) {
+  const normalizedSku = normalizeUpc(sku);
+  if (!normalizedSku) return null;
+  const product = globalCustomProducts.find(item => normalizeUpc(item.sku) === normalizedSku);
+  if (!product || !CATEGORY_ORDER.includes(product.category)) return null;
+  const categoryIndex = CATEGORY_ORDER.indexOf(product.category);
+  const builtInCount = PRODUCT_CATALOG.filter(item => item.category === product.category).length;
+  const customInCategory = globalCustomProducts
+    .filter(item => item.category === product.category)
+    .sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
+  const customIndex = Math.max(0, customInCategory.findIndex(item => normalizeUpc(item.sku) === normalizedSku));
+  return {
+    name: product.category,
+    categoryIndex,
+    itemIndex: builtInCount + customIndex,
+    globalIndex: PRODUCT_CATALOG.length + globalCustomProducts.findIndex(item => normalizeUpc(item.sku) === normalizedSku),
+  };
 }
 
 function resolveSku(value) {
@@ -3311,7 +3613,14 @@ function activateTab(name) {
 
 function formatNumber(value) {
   const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
   return Number.isInteger(number) ? String(number) : number.toFixed(1);
+}
+
+function formatOrderingNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "Needs review";
+  return formatNumber(number);
 }
 
 function formatDateTime(value) {
