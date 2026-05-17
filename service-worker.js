@@ -1,4 +1,4 @@
-const CACHE_NAME = "wine-order-count-static-v21";
+const CACHE_NAME = "wine-order-count-static-v22";
 const ASSETS = [
   "./",
   "./index.html",

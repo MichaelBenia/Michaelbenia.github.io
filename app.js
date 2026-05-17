@@ -61,6 +61,8 @@ const dom = {
   settingsButton: document.getElementById("settingsButton"),
   statusBanner: document.getElementById("statusBanner"),
   lastSavedText: document.getElementById("lastSavedText"),
+  inventorySearchInput: document.getElementById("inventorySearchInput"),
+  clearInventorySearchButton: document.getElementById("clearInventorySearchButton"),
   inventorySummary: document.getElementById("inventorySummary"),
   orderingSummary: document.getElementById("orderingSummary"),
   inventoryTable: document.getElementById("inventoryTable"),
@@ -128,7 +130,7 @@ function defaultState() {
       recommendations: [],
     },
     inventoryHistory: [],
-    settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false },
+    settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false, inventorySearch: "" },
     lastSaved: null,
   };
 }
@@ -996,6 +998,7 @@ function loadState(storeNumber = currentStoreNumber || "") {
       settings: {
         targetWeeks: Number(parsed.settings?.targetWeeks) || DEFAULT_TARGET_WEEKS,
         showSaleOnly: parsed.settings?.showSaleOnly === true,
+        inventorySearch: cleanText(parsed.settings?.inventorySearch || ""),
       },
       lastSaved: parsed.lastSaved || null,
     };
@@ -1241,6 +1244,18 @@ function bindEvents() {
   dom.clearAllButton.addEventListener("click", clearAllLocalData);
   dom.clearAppCacheButton.addEventListener("click", clearAppCache);
   dom.closeHistoryModalButton.addEventListener("click", closeInventoryHistory);
+  dom.inventorySearchInput.addEventListener("input", () => {
+    state.settings.inventorySearch = dom.inventorySearchInput.value;
+    renderInventoryTable();
+    dom.clearInventorySearchButton.hidden = !cleanText(state.settings.inventorySearch || "");
+  });
+  dom.clearInventorySearchButton.addEventListener("click", () => {
+    state.settings.inventorySearch = "";
+    dom.inventorySearchInput.value = "";
+    dom.clearInventorySearchButton.hidden = true;
+    renderInventoryTable();
+    dom.inventorySearchInput.focus();
+  });
   dom.historyModal.addEventListener("click", event => {
     if (event.target === dom.historyModal) closeInventoryHistory();
   });
@@ -1884,6 +1899,8 @@ function render() {
   renderLastSaved();
   dom.targetWeeksInput.value = state.settings.targetWeeks;
   dom.saleOnlyToggle.checked = state.settings.showSaleOnly === true;
+  dom.inventorySearchInput.value = state.settings.inventorySearch || "";
+  dom.clearInventorySearchButton.hidden = !cleanText(state.settings.inventorySearch || "");
   renderInventorySummary();
   renderOrderingSummary();
   renderInventoryTable();
@@ -1948,8 +1965,9 @@ function renderInventoryTable() {
   const filteredProducts = state.settings.showSaleOnly
     ? sortedProducts.filter(product => product.onSale)
     : sortedProducts;
-  const visibleProducts = filteredProducts.filter(product => productCategoryInfo(product));
-  const unknownProducts = filteredProducts.filter(product => !productCategoryInfo(product));
+  const searchFilteredProducts = filterInventoryProductsBySearch(filteredProducts);
+  const visibleProducts = searchFilteredProducts.filter(product => productCategoryInfo(product));
+  const unknownProducts = searchFilteredProducts.filter(product => !productCategoryInfo(product));
 
   let html = `<table><thead><tr>
     <th class="center-cell">Info</th><th>JDE/UPC</th><th>Description</th><th class="center-cell">Backstock</th>
@@ -1969,8 +1987,22 @@ function renderInventoryTable() {
       html += inventoryRowHtml(product);
     }
   }
+  if (!visibleProducts.length && !unknownProducts.length && cleanText(state.settings.inventorySearch || "")) {
+    html += `<tr><td colspan="9"><div class="empty-state">No inventory items match your search.</div></td></tr>`;
+  }
   html += "</tbody></table>";
   dom.inventoryTable.innerHTML = html;
+}
+
+function filterInventoryProductsBySearch(products) {
+  const query = cleanText(state.settings.inventorySearch || "").toLowerCase();
+  if (!query) return products;
+  return products.filter(product => {
+    const sku = String(product.id || "").toLowerCase();
+    const sourceSku = String(product.sourceSku || "").toLowerCase();
+    const name = String(product.name || "").toLowerCase();
+    return sku.includes(query) || sourceSku.includes(query) || name.includes(query);
+  });
 }
 
 function inventoryRowHtml(product) {

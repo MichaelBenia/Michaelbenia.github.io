@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#6431ca" />
     <title>Wine Order Count</title>
-    <link rel="stylesheet" href="styles.css?v=20260517-icon-only-actions" />
+    <link rel="stylesheet" href="styles.css?v=20260517-inventory-search" />
   </head>
   <body>
     <div class="app-shell">
@@ -58,7 +58,13 @@
               <h2>Inventory</h2>
               <p>Front is units. Backstock is full cases.</p>
             </div>
-            <div id="inventorySummary" class="summary-grid"></div>
+            <div class="inventory-header-tools">
+              <div class="inventory-search">
+                <input id="inventorySearchInput" type="search" placeholder="Search by SKU or product name" autocomplete="off" />
+                <button id="clearInventorySearchButton" type="button" title="Clear inventory search" aria-label="Clear inventory search">×</button>
+              </div>
+              <div id="inventorySummary" class="summary-grid"></div>
+            </div>
           </div>
           <div class="table-card">
             <div id="inventoryTable" class="table-wrap"></div>
@@ -206,7 +212,7 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260517-icon-only-actions"></script>
-    <script src="app.js?v=20260517-icon-only-actions"></script>
+    <script src="catalog.js?v=20260517-inventory-search"></script>
+    <script src="app.js?v=20260517-inventory-search"></script>
   </body>
 </html>
