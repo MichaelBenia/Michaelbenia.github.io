@@ -98,6 +98,20 @@ h2 {
   margin: 8px 0 0;
 }
 
+.tagline {
+  margin: 8px 0 0;
+  color: var(--primary-dark);
+  font-size: clamp(1rem, 2.2vw, 1.28rem);
+  font-weight: 850;
+}
+
+.credit-line {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
 .save-card {
   min-width: 170px;
   padding: 12px 14px;
