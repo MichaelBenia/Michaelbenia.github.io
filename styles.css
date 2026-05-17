@@ -723,6 +723,11 @@ tr.sale-item-row .sale-badge {
   padding: 14px;
 }
 
+.settings-grid .toolbar-toggle {
+  justify-content: flex-start;
+  width: fit-content;
+}
+
 .field-row {
   display: grid;
   gap: 6px;

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#6431ca" />
     <title>Wine Order Count</title>
-    <link rel="stylesheet" href="styles.css?v=20260516-global-sales-fix" />
+    <link rel="stylesheet" href="styles.css?v=20260516-settings-tools-layout" />
   </head>
   <body>
     <div class="app-shell">
@@ -28,6 +28,10 @@
       <section class="store-bar card" aria-label="Store selector">
         <label for="storeSelect">Store</label>
         <select id="storeSelect"></select>
+        <input id="salesFileInput" type="file" accept=".xlsx,.csv" hidden />
+        <button id="uploadSalesButton" class="primary-button">
+          Upload Sales File
+        </button>
         <button id="addStoreButton" class="secondary-button">Add Store</button>
         <button id="refreshStoresButton" class="secondary-button">Refresh Stores</button>
         <button id="reloadStoreButton" class="secondary-button">Reload Store Data</button>
@@ -35,30 +39,6 @@
         <button id="settingsButton" class="ghost-button settings-gear" title="Settings" aria-label="Open settings">
           &#9881;
         </button>
-      </section>
-
-      <section class="toolbar card">
-        <input id="salesFileInput" type="file" accept=".xlsx,.csv" hidden />
-        <input id="inventoryFileInput" type="file" accept=".xlsx,.csv" hidden />
-        <button id="uploadSalesButton" class="primary-button">
-          Upload Sales File
-        </button>
-        <button id="uploadInventoryButton" class="secondary-button">
-          Upload Inventory File
-        </button>
-        <button id="saveProgressButton" class="secondary-button">
-          Save Progress
-        </button>
-        <button id="exportInventoryButton" class="secondary-button">
-          Export Inventory
-        </button>
-        <button id="exportOrdersButton" class="secondary-button">
-          Export Order List
-        </button>
-        <label class="toolbar-toggle" title="Show only products currently marked as on sale.">
-          <input id="saleOnlyToggle" type="checkbox" />
-          Show Only Sale Items
-        </label>
       </section>
 
       <div id="statusBanner" class="status-banner" role="status">
@@ -110,6 +90,26 @@
 
         <section id="settingsTab" class="tab-panel">
           <div class="settings-grid">
+            <section class="card">
+              <h2>Inventory Tools</h2>
+              <input id="inventoryFileInput" type="file" accept=".xlsx,.csv" hidden />
+              <button id="uploadInventoryButton" class="secondary-button">
+                Upload Inventory File
+              </button>
+              <button id="saveProgressButton" class="secondary-button">
+                Save Progress
+              </button>
+              <button id="exportInventoryButton" class="secondary-button">
+                Export Inventory
+              </button>
+              <button id="exportOrdersButton" class="secondary-button">
+                Export Order List
+              </button>
+              <label class="toolbar-toggle" title="Show only products currently marked as on sale.">
+                <input id="saleOnlyToggle" type="checkbox" />
+                Show Only Sale Items
+              </label>
+            </section>
             <section class="card">
               <h2>Data Management</h2>
               <button id="clearSalesButton" class="secondary-button danger">
@@ -206,7 +206,7 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260516-global-sales-fix"></script>
-    <script src="app.js?v=20260516-global-sales-fix"></script>
+    <script src="catalog.js?v=20260516-settings-tools-layout"></script>
+    <script src="app.js?v=20260516-settings-tools-layout"></script>
   </body>
 </html>
