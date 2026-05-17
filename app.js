@@ -132,6 +132,7 @@ function defaultState() {
       recommendations: [],
     },
     inventoryHistory: [],
+    stockHistoryClearedAt: null,
     settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false, inventorySearch: "" },
     lastSaved: null,
   };
@@ -751,11 +752,25 @@ function mergeInventoryHistory(entries) {
     entry,
   ]));
   for (const entry of entries) {
+    if (isClearedStockHistoryEntry(entry)) continue;
     byKey.set(inventoryHistoryKey(entry), entry);
   }
   state.inventoryHistory = [...byKey.values()]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
     .slice(0, 5000);
+}
+
+function isStockAdjustmentHistoryEntry(entry) {
+  return (entry?.eventType || "adjustment") !== "transfer";
+}
+
+function isClearedStockHistoryEntry(entry) {
+  if (!isStockAdjustmentHistoryEntry(entry)) return false;
+  const clearedAt = Date.parse(state.stockHistoryClearedAt || "");
+  const createdAt = Date.parse(entry?.createdAt || "");
+  return Number.isFinite(clearedAt)
+    && Number.isFinite(createdAt)
+    && createdAt <= clearedAt;
 }
 
 function inventoryHistoryKey(entry) {
@@ -969,6 +984,20 @@ function isMissingSupabaseTableError(error, tableName = "") {
     || (table && haystack.includes(table) && haystack.includes("schema cache"));
 }
 
+function isMissingSupabaseColumnError(error, columnName = "") {
+  const haystack = [
+    error?.code,
+    error?.message,
+    error?.details,
+    error?.hint,
+  ].map(value => String(value || "").toLowerCase()).join(" ");
+  const column = String(columnName || "").toLowerCase();
+  return haystack.includes("42703")
+    || haystack.includes("column")
+    || haystack.includes("schema cache")
+    || (column && haystack.includes(column));
+}
+
 function loadState(storeNumber = currentStoreNumber || "") {
   try {
     migrateLegacyStorageIfNeeded(storeNumber);
@@ -997,6 +1026,7 @@ function loadState(storeNumber = currentStoreNumber || "") {
         recommendations: parsed.processing?.recommendations || [],
       },
       inventoryHistory: parsed.inventoryHistory || parsed.inventoryAdjustmentHistory || [],
+      stockHistoryClearedAt: parsed.stockHistoryClearedAt || null,
       settings: {
         targetWeeks: Number(parsed.settings?.targetWeeks) || DEFAULT_TARGET_WEEKS,
         showSaleOnly: parsed.settings?.showSaleOnly === true,
@@ -1162,6 +1192,7 @@ function serializeStateForSupabase() {
     orderRecommendations: cleanState.processing?.recommendations || [],
     inventoryHistory: cleanState.inventoryHistory || [],
     inventoryAdjustmentHistory: cleanState.inventoryHistory || [],
+    stockHistoryClearedAt: cleanState.stockHistoryClearedAt || null,
     categoryState: cleanState.categoryState || {},
     settings: cleanState.settings || {},
     clientLastSaved: cleanState.lastSaved || null,
@@ -1193,6 +1224,7 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
       recommendations: remoteState.orderRecommendations || [],
     },
     inventoryHistory: remoteState.inventoryHistory || remoteState.inventoryAdjustmentHistory || [],
+    stockHistoryClearedAt: remoteState.stockHistoryClearedAt || null,
     settings: {
       ...defaultState().settings,
       ...(remoteState.settings || {}),
@@ -2577,6 +2609,7 @@ function historyEntriesForProduct(productId) {
   const cutoff = Date.now() - (14 * 24 * 60 * 60 * 1000);
   return (state.inventoryHistory || [])
     .filter(entry => normalizeUpc(entry.productId) === id)
+    .filter(entry => !isClearedStockHistoryEntry(entry))
     .filter(entry => Date.parse(entry.createdAt) >= cutoff);
 }
 
@@ -2758,19 +2791,35 @@ async function clearStockHistoryForCurrentStore() {
   console.log("Clearing stock history for store:", storeNumber);
 
   const previousHistory = [...(state.inventoryHistory || [])];
+  const previousClearedAt = state.stockHistoryClearedAt || null;
   try {
+    state.stockHistoryClearedAt = new Date().toISOString();
     state.inventoryHistory = previousHistory.filter(entry => !isCurrentStoreStockAdjustment(entry, storeNumber));
     saveLocalBackup();
-    await clearSupabaseStockAdjustmentHistory(storeNumber);
-    await saveStateNowToSupabase({ successMessage: "Stock history cleared for this store.", silent: true });
+    const deleteResult = await clearSupabaseStockAdjustmentHistory(storeNumber);
+    const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Stock history cleared for this store.", silent: true });
     closeInventoryHistory();
     render();
-    setStatus("Stock history cleared for this store.");
+    if (deleteResult.skippedBecauseMissingTable) {
+      setStatus("Stock history cleared for this store. Optional Supabase history table is not installed.");
+    } else if (!savedToSupabase) {
+      setStatus("Stock history cleared locally. Supabase save failed, so retry Save Progress when online.", true);
+    } else {
+      setStatus("Stock history cleared for this store.");
+    }
     showToast("Stock history cleared for this store.");
   } catch (error) {
     state.inventoryHistory = previousHistory;
+    state.stockHistoryClearedAt = previousClearedAt;
     saveLocalBackup();
-    console.error("Could not clear stock history:", error);
+    console.error("Clear stock history failed:", error);
+    console.error("Clear stock history failed details:", {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
+      hint: error?.hint,
+      name: error?.name,
+    });
     setStatus("Could not clear stock history.", true);
     showToast("Could not clear stock history.");
   } finally {
@@ -2786,28 +2835,66 @@ function isCurrentStoreStockAdjustment(entry, storeNumber) {
 }
 
 async function clearSupabaseStockAdjustmentHistory(storeNumber) {
+  const tableName = "inventory_adjustment_history";
   const supabase = await getSupabaseClient();
-  let { data, error } = await supabase
-    .from("inventory_adjustment_history")
-    .delete()
-    .eq("store_number", storeNumber)
-    .eq("event_type", "adjustment")
-    .select("id");
+  const attempts = [
+    {
+      label: "store_number + event_type adjustment",
+      filters: { store_number: storeNumber, event_type: "adjustment" },
+      run: () => supabase
+        .from(tableName)
+        .delete()
+        .eq("store_number", storeNumber)
+        .eq("event_type", "adjustment")
+        .select("id"),
+      canFallback: error => isMissingSupabaseColumnError(error, "event_type"),
+    },
+    {
+      label: "store_number + transfer_direction is null",
+      filters: { store_number: storeNumber, transfer_direction: null },
+      run: () => supabase
+        .from(tableName)
+        .delete()
+        .eq("store_number", storeNumber)
+        .is("transfer_direction", null)
+        .select("id"),
+      canFallback: error => isMissingSupabaseColumnError(error, "transfer_direction"),
+    },
+    {
+      label: "store_number + change_amount present",
+      filters: { store_number: storeNumber, change_amount: "not null" },
+      run: () => supabase
+        .from(tableName)
+        .delete()
+        .eq("store_number", storeNumber)
+        .not("change_amount", "is", null)
+        .select("id"),
+      canFallback: () => false,
+    },
+  ];
 
-  if (error && String(error.message || "").includes("event_type")) {
-    const fallback = await supabase
-      .from("inventory_adjustment_history")
-      .delete()
-      .eq("store_number", storeNumber)
-      .is("transfer_direction", null)
-      .select("id");
-    data = fallback.data;
-    error = fallback.error;
+  for (const attempt of attempts) {
+    console.log("Clearing stock history with:", {
+      selectedStore: currentStoreNumber,
+      selectedStoreId: storeNumber,
+      tableName,
+      filters: attempt.filters,
+    });
+    const { data, error } = await attempt.run();
+    console.log("Clear stock history result:", { attempt: attempt.label, data, error });
+    if (!error) return { rows: data || [], skippedBecauseMissingTable: false };
+    if (isMissingSupabaseTableError(error, tableName)) {
+      console.warn("Optional Supabase history table is missing. Store-scoped app-state history was cleared instead.", error);
+      return { rows: [], skippedBecauseMissingTable: true, error };
+    }
+    if (attempt.canFallback(error)) {
+      console.warn(`Clear stock history fallback after ${attempt.label} failed:`, error);
+      continue;
+    }
+    throw error;
   }
 
-  console.log("Clear stock history result:", { data, error });
-  if (error) throw error;
-  return data || [];
+  return { rows: [], skippedBecauseMissingTable: false };
 }
 
 async function clearAllSaleFlags() {
