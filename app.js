@@ -96,6 +96,7 @@ let state = defaultState();
 let saveTimer = null;
 let supabaseSaveTimer = null;
 let editingProductId = null;
+const transferringProductIds = new Set();
 let syncStatus = "Local backup saved";
 let isSwitchingStore = false;
 let supabaseClientPromise = null;
@@ -1889,19 +1890,19 @@ function renderInventoryTable() {
   const unknownProducts = filteredProducts.filter(product => !productCategoryInfo(product));
 
   let html = `<table><thead><tr>
-    <th class="center-cell">Info</th><th>JDE/UPC</th><th>Description</th><th class="center-cell">Front</th>
-    <th class="center-cell">Backstock</th><th>Notes</th><th class="center-cell">Sale</th><th class="center-cell">Actions</th>
+    <th class="center-cell">Info</th><th>JDE/UPC</th><th>Description</th><th class="center-cell">Backstock</th>
+    <th class="center-cell">Transfer</th><th class="center-cell">Front</th><th>Notes</th><th class="center-cell">Sale</th><th class="center-cell">Actions</th>
   </tr></thead><tbody>`;
   for (const section of CATEGORY_CONFIG) {
     const products = visibleProducts.filter(product => productCategoryInfo(product)?.name === section.name);
     if (!products.length) continue;
-    html += `<tr class="category-row"><td colspan="8">${escapeHtml(section.name)}</td></tr>`;
+    html += `<tr class="category-row"><td colspan="9">${escapeHtml(section.name)}</td></tr>`;
     for (const product of products) {
       html += inventoryRowHtml(product);
     }
   }
   if (unknownProducts.length) {
-    html += `<tr class="category-row"><td colspan="8">Unmatched Products</td></tr>`;
+    html += `<tr class="category-row"><td colspan="9">Unmatched Products</td></tr>`;
     for (const product of unknownProducts) {
       html += inventoryRowHtml(product);
     }
@@ -1918,8 +1919,9 @@ function inventoryRowHtml(product) {
       <td class="center-cell">${historyButton(product)}</td>
       <td><input class="edit-input sku-edit-input" data-edit-field="sku" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.id)}" /></td>
       <td><input class="edit-input description-edit-input" data-edit-field="description" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.name)}" /></td>
-      <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
       <td class="number-cell">${quantityControl(product.id, "backstock", product.backstock || 0)}</td>
+      <td class="center-cell">${transferControl(product)}</td>
+      <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
       <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
       <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
       <td class="center-cell row-actions">
@@ -1933,8 +1935,9 @@ function inventoryRowHtml(product) {
     <td class="center-cell">${historyButton(product)}</td>
     <td>${escapeHtml(product.id)}</td>
     <td class="desc-cell product-name-cell" title="${escapeHtml(product.name)}">${escapeHtml(product.name)}${saleBadge(product)}</td>
-    <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
     <td class="number-cell">${quantityControl(product.id, "backstock", product.backstock || 0)}</td>
+    <td class="center-cell">${transferControl(product)}</td>
+    <td class="number-cell">${quantityControl(product.id, "quantity", product.quantity || 0)}</td>
     <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
     <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
     <td class="center-cell row-actions">
@@ -2081,6 +2084,98 @@ async function updateInventoryProduct(product, updates, { historySource = "manua
   return saved;
 }
 
+async function transferCase(product, direction) {
+  if (!product || transferringProductIds.has(product.id)) return false;
+
+  const caseSize = unitsPerCaseForProduct(product);
+  const currentBackstockCases = Math.max(0, parseWholeNumber(product.backstock));
+  const currentFrontUnits = Math.max(0, parseWholeNumber(product.quantity));
+  let nextBackstockCases = currentBackstockCases;
+  let nextFrontUnits = currentFrontUnits;
+
+  if (direction === "back_to_front") {
+    if (currentBackstockCases <= 0) {
+      showToast("No backstock cases available to move.");
+      setStatus("No backstock cases available to move.", true);
+      return false;
+    }
+    nextBackstockCases = currentBackstockCases - 1;
+    nextFrontUnits = currentFrontUnits + caseSize;
+  } else if (direction === "front_to_back") {
+    if (currentFrontUnits < caseSize) {
+      showToast("Not enough front stock units to make a full case.");
+      setStatus("Not enough front stock units to make a full case.", true);
+      return false;
+    }
+    nextBackstockCases = currentBackstockCases + 1;
+    nextFrontUnits = currentFrontUnits - caseSize;
+  } else {
+    return false;
+  }
+
+  const beforeTotalUnits = currentFrontUnits + (currentBackstockCases * caseSize);
+  const afterTotalUnits = nextFrontUnits + (nextBackstockCases * caseSize);
+  if (beforeTotalUnits !== afterTotalUnits) {
+    console.error("Blocked stock transfer because totals did not match.", {
+      product,
+      direction,
+      caseSize,
+      beforeTotalUnits,
+      afterTotalUnits,
+    });
+    showToast("Transfer blocked because total inventory would change.");
+    setStatus("Transfer blocked because total inventory would change.", true);
+    return false;
+  }
+
+  const previousValues = {
+    quantity: product.quantity,
+    backstock: product.backstock,
+    lastUpdated: product.lastUpdated,
+  };
+
+  transferringProductIds.add(product.id);
+  product.quantity = nextFrontUnits;
+  product.backstock = nextBackstockCases;
+  product.lastUpdated = new Date().toISOString();
+  recalculateRecommendations();
+  render();
+
+  try {
+    console.log("Transferring case between backstock and front stock:", {
+      productId: product.id,
+      direction,
+      caseSize,
+      previousFrontUnits: currentFrontUnits,
+      nextFrontUnits,
+      previousBackstockCases: currentBackstockCases,
+      nextBackstockCases,
+    });
+    // TODO: Add transfer-specific inventory history once movement events are supported.
+    const saved = await saveInventoryMutationToSupabase({ silent: true });
+    if (!saved) throw new Error("Inventory transfer was not saved to Supabase.");
+    const message = direction === "back_to_front"
+      ? "Moved 1 case to front stock."
+      : "Moved 1 case to backstock.";
+    setStatus(`${message} Total inventory is unchanged.`);
+    showToast(message);
+    return true;
+  } catch (error) {
+    console.error("Inventory transfer save failed:", error);
+    product.quantity = previousValues.quantity;
+    product.backstock = previousValues.backstock;
+    product.lastUpdated = previousValues.lastUpdated;
+    recalculateRecommendations();
+    saveLocalBackup();
+    setStatus("Transfer could not be saved.", true);
+    showToast("Transfer could not be saved.");
+    return false;
+  } finally {
+    transferringProductIds.delete(product.id);
+    render();
+  }
+}
+
 function handleInventoryClick(event) {
   const button = event.target.closest("button[data-action]");
   if (!button) return;
@@ -2106,6 +2201,10 @@ function handleInventoryClick(event) {
   }
   if (button.dataset.action === "showHistory") {
     openInventoryHistory(product);
+    return;
+  }
+  if (button.dataset.action === "transferCase") {
+    transferCase(product, button.dataset.direction);
     return;
   }
   const field = button.dataset.field;
@@ -2544,6 +2643,53 @@ function quantityControl(id, field, value) {
     <input type="number" min="0" data-field="${field}" data-id="${escapeHtml(id)}" value="${Number(value || 0)}" />
     <button data-action="adjust" data-field="${field}" data-id="${escapeHtml(id)}" data-delta="1">+</button>
   </span>`;
+}
+
+function transferControl(product) {
+  const caseSize = unitsPerCaseForProduct(product);
+  const isSaving = transferringProductIds.has(product.id);
+  const backstockCases = Math.max(0, parseWholeNumber(product.backstock));
+  const frontUnits = Math.max(0, parseWholeNumber(product.quantity));
+  const backToFrontDisabled = isSaving || backstockCases <= 0;
+  const frontToBackDisabled = isSaving || frontUnits < caseSize;
+  return `<span class="transfer-control" title="1 case = ${caseSize} units">
+    <button class="transfer-button" data-action="transferCase" data-direction="back_to_front" data-id="${escapeHtml(product.id)}" ${backToFrontDisabled ? "disabled" : ""} title="Move 1 case to front stock" aria-label="Move 1 case from backstock to front stock">&#8594;</button>
+    <button class="transfer-button" data-action="transferCase" data-direction="front_to_back" data-id="${escapeHtml(product.id)}" ${frontToBackDisabled ? "disabled" : ""} title="Move 1 case to backstock" aria-label="Move 1 case from front stock to backstock">&#8592;</button>
+  </span>`;
+}
+
+function unitsPerCaseForProduct(product) {
+  const explicitFields = [
+    product?.unitsPerCase,
+    product?.units_per_case,
+    product?.caseSize,
+    product?.case_size,
+    product?.bottlesPerCase,
+    product?.bottles_per_case,
+    product?.packSize,
+    product?.pack_size,
+  ];
+  for (const value of explicitFields) {
+    const parsed = parseWholeNumber(value);
+    if (parsed > 0) return parsed;
+    const parsedPack = parseCaseSize(value);
+    if (parsedPack) return parsedPack;
+  }
+
+  const recommendation = (state.processing.recommendations || []).find(item => {
+    const itemId = normalizeUpc(item.id);
+    return itemId === normalizeUpc(product?.id) || itemId === normalizeUpc(product?.sourceSku);
+  });
+  if (recommendation?.unitsPerCase) {
+    const parsed = parseWholeNumber(recommendation.unitsPerCase);
+    if (parsed > 0) return parsed;
+  }
+
+  const parsedFromText = parseCaseSize(`${product?.pack || ""} ${product?.name || ""}`);
+  if (parsedFromText) return parsedFromText;
+
+  console.warn("Missing case size for product, defaulting to 12:", product);
+  return 12;
 }
 
 function saleBadge(item) {

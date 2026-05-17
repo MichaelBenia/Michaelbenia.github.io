@@ -527,6 +527,38 @@ tr.sale-item-row .sale-badge {
   font-weight: 850;
 }
 
+.transfer-control {
+  display: inline-grid;
+  grid-template-columns: 28px 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 62px;
+}
+
+.transfer-button {
+  width: 28px;
+  height: 26px;
+  border: 1px solid #bca3ec;
+  border-radius: 8px;
+  background: #f8f3ff;
+  color: var(--primary-dark);
+  font-size: 0.9rem;
+  font-weight: 950;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.transfer-button:hover:not(:disabled) {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.transfer-button:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .small-number {
   width: 62px;
   padding: 5px;
