@@ -2003,8 +2003,8 @@ function inventoryRowHtml(product) {
     <td><input class="notes-input" data-field="notes" data-id="${escapeHtml(product.id)}" value="${escapeHtml(product.notes || "")}" /></td>
     <td class="center-cell"><input type="checkbox" data-field="onSale" data-id="${escapeHtml(product.id)}" ${product.onSale ? "checked" : ""} title="This item is currently marked as on sale." /></td>
     <td class="center-cell row-actions">
-      <button class="icon-action edit-icon" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}</button>
-      <button class="icon-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}</button>
+      <button class="icon-action labeled-action edit-icon" data-action="editProduct" data-id="${escapeHtml(product.id)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}<span>Edit</span></button>
+      <button class="icon-action labeled-action danger-icon" data-action="deleteProduct" data-id="${escapeHtml(product.id)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}<span>Delete</span></button>
     </td>
   </tr>`;
 }
@@ -2404,14 +2404,17 @@ function moveProcessingSku(oldSku, newSku) {
 function actionIcon(name) {
   if (name === "trash") {
     return `<svg class="row-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M9 3h6l1 2h4v2H4V5h4l1-2Z"></path>
-      <path d="M6 9h12l-1 12H7L6 9Z"></path>
-      <path d="M10 11v7M14 11v7"></path>
+      <path d="M3 6h18"></path>
+      <path d="M8 6V4h8v2"></path>
+      <path d="M19 6l-1 14H6L5 6"></path>
+      <path d="M10 11v6"></path>
+      <path d="M14 11v6"></path>
     </svg>`;
   }
   return `<svg class="row-action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-    <path d="M4 17.5V20h2.5L17.8 8.7l-2.5-2.5L4 17.5Z"></path>
-    <path d="M18.8 7.7 16.3 5.2l1.2-1.2a1.8 1.8 0 0 1 2.5 0l.1.1a1.8 1.8 0 0 1 0 2.5l-1.3 1.1Z"></path>
+    <path d="M4 20h4.5L19.2 9.3l-4.5-4.5L4 15.5V20Z"></path>
+    <path d="M13.5 6 18 10.5"></path>
+    <path d="M15.2 4.5 17 2.7a1.6 1.6 0 0 1 2.3 0l2 2a1.6 1.6 0 0 1 0 2.3l-1.8 1.8"></path>
   </svg>`;
 }
 
