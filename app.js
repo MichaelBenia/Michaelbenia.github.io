@@ -390,7 +390,7 @@ async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
     console.log("Sale update result:", { data: null, error });
     if (error) throw error;
     await updateAllStoreStateSaleFlags(productId, onSale, updatedAt);
-    setSyncStatus("Global sale status synced to Supabase");
+    setSyncStatus("Sale status synced");
     if (!silent) setStatus(`${productId} sale status updated globally.`);
     return true;
   } catch (error) {
@@ -400,7 +400,7 @@ async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
       return saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { silent });
     }
     console.error("Global sale status save failed:", error);
-    setSyncStatus("Supabase save failed");
+    setSyncStatus("Sync failed");
     showSupabaseError(error);
     return false;
   }
@@ -409,12 +409,12 @@ async function saveGlobalSaleStatus(product, onSale, { silent = false } = {}) {
 async function saveGlobalSaleStatusFallback(productId, onSale, updatedAt, { silent = false } = {}) {
   try {
     await updateAllStoreStateSaleFlags(productId, onSale, updatedAt);
-    setSyncStatus("Global sale status synced through store states");
+    setSyncStatus("Sale status synced");
     if (!silent) setStatus(`${productId} sale status updated across stores.`);
     return true;
   } catch (error) {
     console.error("Global sale status fallback save failed:", error);
-    setSyncStatus("Supabase save failed");
+    setSyncStatus("Sync failed");
     showSupabaseError(error);
     return false;
   }
@@ -1063,14 +1063,14 @@ function saveState({ showConfirmation = false } = {}) {
   saveLocalBackup();
   setSyncStatus("Local backup saved");
   scheduleSupabaseSave();
-  if (showConfirmation) showToast("Supabase save queued.");
+  if (showConfirmation) showToast("Save queued.");
 }
 
-async function saveStateNowToSupabase({ successMessage = "Project saved to Supabase", silent = false } = {}) {
+async function saveStateNowToSupabase({ successMessage = "Project saved", silent = false } = {}) {
   saveLocalBackup();
   if (!selectedSupabaseStoreNumber()) {
     setSyncStatus("Local backup saved");
-    if (!silent) showToast("Select or add a store number before saving to Supabase.");
+    if (!silent) showToast("Select or add a store number before saving.");
     return false;
   }
 
@@ -1079,9 +1079,9 @@ async function saveStateNowToSupabase({ successMessage = "Project saved to Supab
     if (!silent) showToast(successMessage);
     return true;
   } catch (error) {
-    setSyncStatus("Supabase failed, using local backup");
+    setSyncStatus("Sync failed, local backup saved");
     console.error("Supabase error:", error);
-    if (!silent) showToast("Supabase save failed. Project saved locally only.");
+    if (!silent) showToast("Cloud save failed. Project saved on this device.");
     return false;
   }
 }
@@ -1097,7 +1097,7 @@ async function saveInventoryMutationToSupabase({ silent = false } = {}) {
     await syncCurrentStoreToSupabase({ throwOnError: true, silent: true });
     return true;
   } catch (error) {
-    setSyncStatus("Supabase failed, using local backup");
+    setSyncStatus("Sync failed, local backup saved");
     showSupabaseError(error);
     if (!silent) showToast("Inventory save failed. Changes are saved locally only.");
     return false;
@@ -1119,11 +1119,11 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
   const storeNumber = selectedSupabaseStoreNumber();
   if (!storeNumber) {
     setSyncStatus("Local backup saved");
-    if (!silent) showToast("Select or add a store number before saving to Supabase.");
+    if (!silent) showToast("Select or add a store number before saving.");
     return false;
   }
   try {
-    setSyncStatus(`Saving Store ${storeNumber} to Supabase…`);
+    setSyncStatus(`Saving Store ${storeNumber}...`);
     const appState = serializeStateForSupabase();
     console.log("Saving to Supabase store:", storeNumber, appState);
     const result = await saveSupabaseStoreState(storeNumber, appState);
@@ -1132,13 +1132,13 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
       saveLocalCache(storeNumber, state);
     }
     console.log("Supabase save result:", result);
-    if (storeNumber === currentStoreNumber) setSyncStatus(`Store ${storeNumber} synced to Supabase`);
+    if (storeNumber === currentStoreNumber) setSyncStatus(`Store ${storeNumber} synced`);
     return true;
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
-      setSyncStatus("Supabase failed, using local backup");
+      setSyncStatus("Sync failed, local backup saved");
       if (!silent) showSupabaseError(error);
-      if (silent) setStatus("Offline mode: changes are saved on this device and will sync when Supabase is available.");
+      if (silent) setStatus("Offline mode: changes are saved on this device and will sync when the connection returns.");
     }
     if (silent) console.error("Supabase error:", error);
     if (throwOnError) throw error;
@@ -1149,14 +1149,14 @@ async function syncCurrentStoreToSupabase({ throwOnError = false, silent = false
 async function saveProjectNow() {
   clearTimeout(saveTimer);
   clearTimeout(supabaseSaveTimer);
-  const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Project saved to Supabase", silent: true });
+  const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Project saved", silent: true });
   if (savedToSupabase) {
-    showToast("Project saved to Supabase");
-    setStatus(`Project saved to Supabase for Store ${currentStoreNumber}.`);
+    showToast("Project saved.");
+    setStatus(`Project saved for Store ${currentStoreNumber}.`);
   } else if (!selectedSupabaseStoreNumber()) {
-    showToast("Select or add a store number before saving to Supabase.");
+    showToast("Select or add a store number before saving.");
   } else {
-    showToast("Supabase save failed. Project saved locally only.");
+    showToast("Cloud save failed. Project saved on this device.");
   }
 }
 
@@ -1257,53 +1257,53 @@ function hydrateStateFromRemote(remoteState, storeNumber) {
 }
 
 function bindEvents() {
-  dom.storeSelect.addEventListener("change", event => switchStore(event.target.value));
-  dom.addStoreButton.addEventListener("click", addStore);
-  dom.refreshStoresButton.addEventListener("click", refreshStoresAndCurrentData);
-  dom.reloadStoreButton.addEventListener("click", reloadCurrentStoreData);
-  dom.uploadSalesButton.addEventListener("click", () => dom.salesInput.click());
-  dom.uploadInventoryButton.addEventListener("click", () => dom.inventoryInput.click());
-  dom.salesInput.addEventListener("change", event => handleSalesFile(event.target.files?.[0]));
-  dom.inventoryInput.addEventListener("change", event => handleInventoryFile(event.target.files?.[0]));
-  dom.saveProgressButton.addEventListener("click", saveProjectNow);
-  dom.exportInventoryButton.addEventListener("click", exportInventoryCsv);
-  dom.exportOrdersButton.addEventListener("click", exportOrdersCsv);
-  dom.settingsButton.addEventListener("click", () => activateTab("settings"));
-  dom.makeDefaultStoreButton.addEventListener("click", makeCurrentStoreDefault);
-  dom.clearDefaultStoreButton.addEventListener("click", clearDefaultStore);
-  dom.applyDeductionButton.addEventListener("click", applySalesDeduction);
-  dom.clearSalesButton.addEventListener("click", clearSalesData);
-  dom.clearStockHistoryButton.addEventListener("click", clearStockHistoryForCurrentStore);
-  dom.clearInventoryButton.addEventListener("click", clearInventoryCounts);
-  dom.clearSaleFlagsButton.addEventListener("click", clearAllSaleFlags);
-  dom.restoreDeletedItemsButton.addEventListener("click", restoreDeletedInventoryItems);
-  dom.clearAllButton.addEventListener("click", clearAllLocalData);
-  dom.clearAppCacheButton.addEventListener("click", clearAppCache);
-  dom.helpGuideButton.addEventListener("click", openHelpGuide);
-  dom.closeHistoryModalButton.addEventListener("click", closeInventoryHistory);
-  dom.inventorySearchInput.addEventListener("input", () => {
+  on(dom.storeSelect, "change", event => switchStore(event.target.value));
+  on(dom.addStoreButton, "click", addStore);
+  on(dom.refreshStoresButton, "click", refreshStoresAndCurrentData);
+  on(dom.reloadStoreButton, "click", reloadCurrentStoreData);
+  on(dom.uploadSalesButton, "click", () => dom.salesInput?.click());
+  on(dom.uploadInventoryButton, "click", () => dom.inventoryInput?.click());
+  on(dom.salesInput, "change", event => handleSalesFile(event.target.files?.[0]));
+  on(dom.inventoryInput, "change", event => handleInventoryFile(event.target.files?.[0]));
+  on(dom.saveProgressButton, "click", saveProjectNow);
+  on(dom.exportInventoryButton, "click", exportInventoryCsv);
+  on(dom.exportOrdersButton, "click", exportOrdersCsv);
+  on(dom.settingsButton, "click", () => activateTab("settings"));
+  on(dom.makeDefaultStoreButton, "click", makeCurrentStoreDefault);
+  on(dom.clearDefaultStoreButton, "click", clearDefaultStore);
+  on(dom.applyDeductionButton, "click", applySalesDeduction);
+  on(dom.clearSalesButton, "click", clearSalesData);
+  on(dom.clearStockHistoryButton, "click", clearStockHistoryForCurrentStore);
+  on(dom.clearInventoryButton, "click", clearInventoryCounts);
+  on(dom.clearSaleFlagsButton, "click", clearAllSaleFlags);
+  on(dom.restoreDeletedItemsButton, "click", restoreDeletedInventoryItems);
+  on(dom.clearAllButton, "click", clearAllLocalData);
+  on(dom.clearAppCacheButton, "click", clearAppCache);
+  on(dom.helpGuideButton, "click", openHelpGuide);
+  on(dom.closeHistoryModalButton, "click", closeInventoryHistory);
+  on(dom.inventorySearchInput, "input", () => {
     state.settings.inventorySearch = dom.inventorySearchInput.value;
     renderInventoryTable();
     dom.clearInventorySearchButton.hidden = !cleanText(state.settings.inventorySearch || "");
   });
-  dom.clearInventorySearchButton.addEventListener("click", () => {
+  on(dom.clearInventorySearchButton, "click", () => {
     state.settings.inventorySearch = "";
     dom.inventorySearchInput.value = "";
     dom.clearInventorySearchButton.hidden = true;
     renderInventoryTable();
     dom.inventorySearchInput.focus();
   });
-  dom.historyModal.addEventListener("click", event => {
+  on(dom.historyModal, "click", event => {
     if (event.target === dom.historyModal) closeInventoryHistory();
   });
-  dom.settingsExportInventoryButton.addEventListener("click", exportInventoryCsv);
-  dom.settingsExportOrdersButton.addEventListener("click", exportOrdersCsv);
-  dom.targetWeeksInput.addEventListener("change", () => {
+  on(dom.settingsExportInventoryButton, "click", exportInventoryCsv);
+  on(dom.settingsExportOrdersButton, "click", exportOrdersCsv);
+  on(dom.targetWeeksInput, "change", () => {
     state.settings.targetWeeks = Math.max(0.5, Number(dom.targetWeeksInput.value) || DEFAULT_TARGET_WEEKS);
     recalculateRecommendations();
     saveState();
   });
-  dom.saleOnlyToggle.addEventListener("change", () => {
+  on(dom.saleOnlyToggle, "change", () => {
     state.settings.showSaleOnly = dom.saleOnlyToggle.checked;
     render();
     saveState();
@@ -1313,20 +1313,28 @@ function bindEvents() {
     button.addEventListener("click", () => activateTab(button.dataset.tab));
   });
 
-  dom.inventoryTable.addEventListener("click", handleInventoryClick);
-  dom.inventoryTable.addEventListener("change", handleInventoryChange);
-  dom.orderingTable.addEventListener("change", handleOrderingChange);
-  dom.statusBanner.addEventListener("click", event => {
+  on(dom.inventoryTable, "click", handleInventoryClick);
+  on(dom.inventoryTable, "change", handleInventoryChange);
+  on(dom.orderingTable, "change", handleOrderingChange);
+  on(dom.statusBanner, "click", event => {
     if (event.target.closest("#retryStoreLoadButton")) initializeSupabaseSync();
   });
   window.addEventListener("online", () => {
-    setStatus("Back online. Syncing latest local changes to Supabase.");
+    setStatus("Back online. Syncing latest changes.");
     syncCurrentStoreToSupabase();
   });
   window.addEventListener("offline", () => {
     setSyncStatus("Offline mode");
-    setStatus("Offline mode: changes are saved on this device and will sync when Supabase is available.");
+    setStatus("Offline mode: changes are saved on this device and will sync when the connection returns.");
   });
+}
+
+function on(element, eventName, handler) {
+  if (!element) {
+    console.warn("Optional UI element missing during event binding:", eventName);
+    return;
+  }
+  element.addEventListener(eventName, handler);
 }
 
 async function initializeSupabaseSync() {
@@ -1352,7 +1360,7 @@ async function initializeSupabaseSync() {
       state = loadState(currentStoreNumber);
       render();
     }
-    setSyncStatus("Supabase failed, using local backup");
+    setSyncStatus("Sync failed, local backup saved");
     console.error("App initialization failed:", error);
     showStoreLoadError(error);
   }
@@ -1422,8 +1430,8 @@ async function subscribeToCurrentStore(storeNumber) {
         applyAppState(incomingState, normalizedStore);
         saveLocalCache(normalizedStore, state);
         renderAll();
-        setSyncStatus("Store updated from Supabase");
-        setStatus(`Store ${normalizedStore} updated from Supabase`);
+        setSyncStatus("Store updated");
+        setStatus(`Store ${normalizedStore} updated.`);
       },
     )
     .subscribe(status => {
@@ -1434,7 +1442,7 @@ async function subscribeToCurrentStore(storeNumber) {
         setStatus("Listening for live store updates");
       }
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        setSyncStatus("Supabase offline, using local backup");
+        setSyncStatus("Offline mode");
       }
     });
 }
@@ -1474,7 +1482,7 @@ async function subscribeToGlobalSaleStatuses() {
         refreshProcessingFromActiveSales();
         saveLocalCache(currentStoreNumber, state);
         renderAll();
-        setStatus("Global sale status updated from Supabase.");
+        setStatus("Sale status updated.");
       },
     )
     .subscribe(status => {
@@ -1522,11 +1530,11 @@ async function refreshStoresFromSupabase({ showConfirmation = false } = {}) {
     if (!storeRegistry.stores.length) {
       setStatus("No stores found. Add a store to begin.");
     } else if (showConfirmation) {
-      showToast("Stores refreshed from Supabase.");
+      showToast("Stores refreshed.");
     }
     return true;
   } catch (error) {
-    setSyncStatus("Supabase offline, using local backup");
+    setSyncStatus("Offline mode");
     console.error("Failed to load stores:", error);
     showStoreLoadError(error);
     return false;
@@ -1551,14 +1559,14 @@ async function addStore() {
   editingProductId = null;
   render();
   try {
-    setSyncStatus(`Saving Store ${storeNumber} to Supabase…`);
+    setSyncStatus(`Saving Store ${storeNumber}...`);
     await upsertSupabaseStore(storeNumber);
     await createSupabaseStoreIfMissing(storeNumber);
     await refreshStoresFromSupabase();
     await loadSelectedStoreFromSupabase({ createIfMissing: true });
     showToast(`Store ${storeNumber} selected.`);
   } catch (error) {
-    setSyncStatus("Supabase failed, using local backup");
+    setSyncStatus("Sync failed, local backup saved");
     showSupabaseError(error);
   }
 }
@@ -1616,7 +1624,7 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
   try {
     console.log("Selected store:", storeNumber);
     console.log("Loading inventory for store:", storeNumber);
-    setSyncStatus(`Loading Store ${storeNumber} from Supabase…`);
+    setSyncStatus(`Loading Store ${storeNumber}...`);
     await refreshGlobalSaleFlagsFromSupabase({ silent: true });
     const remoteState = await withTimeout(getSupabaseStoreState(storeNumber), 10000, "Inventory loading timed out");
     console.log("Loaded from Supabase store:", storeNumber, remoteState);
@@ -1626,8 +1634,8 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
       console.log("Inventory loaded:", state.inventory?.products || []);
       saveLocalCache(storeNumber, state);
       render();
-      setSyncStatus(`Store ${storeNumber} loaded from Supabase`);
-      setStatus(`Store ${storeNumber} loaded from Supabase`);
+      setSyncStatus(`Store ${storeNumber} loaded`);
+      setStatus(`Store ${storeNumber} loaded.`);
       await safeSubscribeToCurrentStore(storeNumber);
       return;
     }
@@ -1641,15 +1649,15 @@ async function loadSelectedStoreFromSupabase({ createIfMissing = false } = {}) {
       await createSupabaseStoreIfMissing(storeNumber);
       await safeSubscribeToCurrentStore(storeNumber);
     } else {
-      setStatus(`Store ${storeNumber} has no Supabase data yet. Starting with a blank store state.`);
+      setStatus(`Store ${storeNumber} has no saved data yet. Starting with a blank store state.`);
       await safeSubscribeToCurrentStore(storeNumber);
     }
   } catch (error) {
     if (storeNumber === currentStoreNumber) {
       state = loadState(storeNumber);
       render();
-      setSyncStatus("Supabase failed, using local backup");
-      setStatus("Inventory could not be loaded for this store. Supabase offline, using local backup.", true);
+      setSyncStatus("Sync failed, local backup saved");
+      setStatus("Inventory could not be loaded for this store. Local backup is being used.", true);
       console.error("Inventory could not be loaded for this store:", error);
       showSupabaseError(error);
     }
@@ -1674,10 +1682,10 @@ async function handleInventoryFile(file) {
       parsedRows: imported,
     };
     recalculateRecommendations();
-    const synced = await saveStateNowToSupabase({ successMessage: "Inventory file saved to Supabase", silent: true });
+    const synced = await saveStateNowToSupabase({ successMessage: "Inventory file saved", silent: true });
     setStatus(synced
-      ? `Loaded ${imported.length} inventory products from ${file.name}. Saved to Supabase for Store ${currentStoreNumber}.`
-      : `Loaded ${imported.length} inventory products from ${file.name}. Saved locally; select a store or retry Supabase sync to share it.`);
+      ? `Loaded ${imported.length} inventory products from ${file.name}. Saved for Store ${currentStoreNumber}.`
+      : `Loaded ${imported.length} inventory products from ${file.name}. Saved on this device; select a store or retry sync to share it.`);
     showToast("Inventory file loaded.");
     activateTab("inventory");
   } catch (error) {
@@ -1712,10 +1720,10 @@ async function handleSalesFile(file) {
     state.sales.activeSessionId = session.id;
     state.sales.sessions = [session, ...state.sales.sessions.filter(item => item.id !== session.id)].slice(0, 20);
     processSalesRows(parsedSales.rows);
-    const synced = await saveStateNowToSupabase({ successMessage: "Sales file saved to Supabase", silent: true });
+    const synced = await saveStateNowToSupabase({ successMessage: "Sales file saved", silent: true });
     setStatus(synced
-      ? `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved to Supabase for Store ${currentStoreNumber}.`
-      : `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved locally; select a store or retry Supabase sync to share it.`);
+      ? `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved for Store ${currentStoreNumber}.`
+      : `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved on this device; select a store or retry sync to share it.`);
     showToast("Sales file loaded.");
     activateTab("ordering");
   } catch (error) {
@@ -2815,14 +2823,14 @@ async function clearStockHistoryForCurrentStore() {
     render();
     console.log("History after clear:", state.inventoryHistory);
     if (deleteResult.missingTable && removedLocalRows === 0) {
-      setStatus("Stock history is not set up yet. No history was cleared.", true);
-      showToast("Stock history is not set up yet. No history was cleared.");
+      setStatus("Stock history is not available for this store. No history was cleared.", true);
+      showToast("Stock history is not available for this store.");
     } else if (deleteResult.missingTable) {
-      setStatus("Stock history cleared for this store. Supabase history table is not set up yet.");
-      showToast("Stock history cleared for this store.");
+      setStatus("Stock history cleared on this device. Shared history is not available for this store.", true);
+      showToast("Stock history cleared on this device.");
     } else if (!savedToSupabase) {
-      setStatus("Stock history cleared locally. Supabase save failed, so retry Save Progress when online.", true);
-      showToast("Stock history cleared locally.");
+      setStatus("Stock history cleared on this device. Use Save Progress again when online.", true);
+      showToast("Stock history cleared on this device.");
     } else {
       setStatus("Stock history cleared for this store.");
       showToast("Stock history cleared for this store.");
@@ -2951,7 +2959,7 @@ function clearAllLocalData() {
     showToast("Select or add a store before clearing store data.");
     return;
   }
-  if (!confirm(`Clear all saved data for Store ${currentStoreNumber}? This will also sync the cleared state to Supabase when available.`)) return;
+  if (!confirm(`Clear all saved data for Store ${currentStoreNumber}? This will also sync the cleared state when available.`)) return;
   localStorage.removeItem(storageKeyForStore(currentStoreNumber));
   state = defaultState();
   render();
@@ -2961,7 +2969,7 @@ function clearAllLocalData() {
 }
 
 async function clearAppCache() {
-  if (!confirm("Clear cached app files and reload? Store data in Supabase will not be deleted.")) return;
+  if (!confirm("Clear cached app files and reload? Saved store data will not be deleted.")) return;
   try {
     if ("serviceWorker" in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
@@ -3255,7 +3263,7 @@ function setStatus(message, isError = false) {
 function showStoreLoadError(error) {
   console.error("Store loading error:", error);
   dom.statusBanner.innerHTML = `
-    <span>Stores could not be loaded. Check Supabase connection or permissions.</span>
+    <span>Stores could not be loaded. Check your connection and try again.</span>
     <button id="retryStoreLoadButton" class="secondary-button status-retry-button" type="button">Retry</button>
   `;
   dom.statusBanner.classList.add("error");
@@ -3270,7 +3278,7 @@ function showSupabaseError(error) {
     hint: error?.hint,
     name: error?.name,
   });
-  setStatus(`Supabase error: ${error?.message || error?.code || "Unknown error"}`, true);
+  setStatus("Cloud sync error. Your changes are saved on this device.", true);
 }
 
 function setSyncStatus(message) {
@@ -3279,10 +3287,10 @@ function setSyncStatus(message) {
 }
 
 function syncStatusClass(message) {
-  if (message.includes("synced to Supabase") || message.includes("loaded from Supabase")) return "synced";
+  if (message.includes("synced") || message.includes("loaded") || message.includes("updated")) return "synced";
   if (message.includes("Saving Store") || message.includes("Loading Store") || message.includes("Listening for live updates")) return "syncing";
   if (message === "Offline mode") return "syncing";
-  if (message.includes("Supabase failed") || message.includes("Supabase offline")) return "error";
+  if (message.includes("Sync failed")) return "error";
   return "local";
 }
 

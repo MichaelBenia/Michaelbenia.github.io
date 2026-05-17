@@ -100,7 +100,7 @@
     <p class="credit">Created by Michael Benia WR358</p>
 
     <h2>App overview</h2>
-    <p>Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when Supabase is available, and sales/order work stays separated from stock counts.</p>
+    <p>Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when online sync is available, and sales/order work stays separated from stock counts.</p>
     <div class="placeholder">[Screenshot: Inventory page]</div>
 
     <h2>Getting started</h2>
@@ -115,7 +115,7 @@
 
     <h2>Selecting or switching stores</h2>
     <p>Use the Store dropdown near the top of the app. Store numbers are treated as text, so leading zeroes are preserved. Data is saved under the selected store number. Switching stores loads that store's inventory counts, uploaded sales data, edited products, deleted products, sale flags, and settings.</p>
-    <p>Use Refresh Stores to reload the shared store list from Supabase. Use Reload Store Data to pull the latest saved data for the selected store.</p>
+    <p>Use Refresh Stores to reload the shared store list. Use Reload Store Data to pull the latest saved data for the selected store.</p>
 
     <h2>Uploading sales files</h2>
     <p>Use Upload Sales File near the store controls.</p>
@@ -177,9 +177,9 @@
 
     <h2>Troubleshooting common errors</h2>
     <h3>Could not clear stock history</h3>
-    <p>This usually means Supabase rejected the delete request. Common causes are a missing inventory_adjustment_history table, missing RLS delete policy, offline mode, or no selected store number. Run docs/supabase-setup.sql in the Supabase SQL editor to create the history table and policies.</p>
+    <p>This usually means the saved history could not be updated. Common causes are missing stock history setup, missing permission to clear history, offline mode, or no selected store number. Ask the app owner to finish the stock history setup.</p>
     <h3>Stock history is not set up yet. No history was cleared.</h3>
-    <p>The live Supabase project is missing the inventory_adjustment_history table. Run the setup SQL, refresh the app, then try again.</p>
+    <p>Online stock history is not available for this store yet. Ask the app owner to finish the stock history setup, refresh the app, then try again.</p>
     <h3>XLSX support is not loaded</h3>
     <p>The browser app needs xlsx.full.min.js beside index.html, or the SheetJS CDN must be reachable. CSV files still work if XLSX support is unavailable.</p>
     <h3>Upload says a column is missing</h3>
@@ -189,9 +189,9 @@
 
     <h2>FAQ</h2>
     <h3>Does the app upload my original files?</h3>
-    <p>The browser app parses files locally. Parsed app data can be saved to Supabase for the selected store.</p>
+    <p>The browser app parses files locally. Parsed app data can be saved for the selected store.</p>
     <h3>Can I use the app without internet?</h3>
-    <p>The app keeps a local backup in the browser. Supabase sync requires internet. Cached app files may continue working offline after the app has been opened.</p>
+    <p>The app keeps a local backup in the browser. Online sync requires internet. Cached app files may continue working offline after the app has been opened.</p>
     <h3>Are sales global across stores?</h3>
     <p>Sale status is intended to be global by product/SKU. Inventory counts remain store-specific.</p>
     <h3>Can I restore deleted built-in products?</h3>

@@ -6,7 +6,7 @@ Created by Michael Benia WR358
 
 ## App overview
 
-Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when Supabase is available, and sales/order work stays separated from stock counts.
+Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when online sync is available, and sales/order work stays separated from stock counts.
 
 [Screenshot: Inventory page]
 
@@ -23,7 +23,7 @@ Wine Inventory helps retail staff count wine inventory, upload weekly sales file
 
 Use the Store dropdown near the top of the app. Store numbers are treated as text, so leading zeroes are preserved. Data is saved under the selected store number. Switching stores loads that store's inventory counts, uploaded sales data, edited products, deleted products, sale flags, and settings.
 
-Use Refresh Stores to reload the shared store list from Supabase. Use Reload Store Data to pull the latest saved data for the selected store.
+Use Refresh Stores to reload the shared store list. Use Reload Store Data to pull the latest saved data for the selected store.
 
 ## Uploading sales files
 
@@ -169,18 +169,18 @@ If stock history still appears after clearing, use Reload Store Data and reopen 
 
 ### Could not clear stock history
 
-This usually means Supabase rejected the delete request. Open the browser console for the full Supabase error. Common causes are:
+This usually means the saved history could not be updated. Common causes are:
 
-- the inventory_adjustment_history table is missing
-- the table exists but RLS delete policy is missing
+- the stock history setup is missing
+- the app does not have permission to clear history
 - the app is offline
 - the selected store number is blank
 
-Run docs/supabase-setup.sql in the Supabase SQL editor to create the history table and policies.
+Run the app setup SQL in the admin console to create the history table and policies.
 
 ### Stock history is not set up yet. No history was cleared.
 
-The live Supabase project is missing the inventory_adjustment_history table. Run the setup SQL, refresh the app, then try again.
+Online stock history is not available for this store yet. Ask the app owner to finish the stock history setup, refresh the app, then try again.
 
 ### XLSX support is not loaded
 
@@ -198,11 +198,11 @@ Confirm both devices selected the same store number. Use Save Progress, Refresh 
 
 ### Does the app upload my original files?
 
-The browser app parses files locally. Parsed app data can be saved to Supabase for the selected store.
+The browser app parses files locally. Parsed app data can be saved for the selected store.
 
 ### Can I use the app without internet?
 
-The app keeps a local backup in the browser. Supabase sync requires internet. Cached app files may continue working offline after the app has been opened.
+The app keeps a local backup in the browser. Online sync requires internet. Cached app files may continue working offline after the app has been opened.
 
 ### Are sales global across stores?
 

@@ -59,7 +59,7 @@ wineAppState_store_{storeNumber}
 
 If Supabase is unavailable, the app continues in local mode and syncs again when the browser comes back online.
 
-The **Save Progress** button writes a local backup first and then waits for the Supabase upsert to finish. A successful manual save shows **Project saved to Supabase**. If Supabase is unavailable or rejects the write, the app keeps the local backup and shows **Supabase save failed. Project saved locally only.**
+The **Save Progress** button writes a local backup first and then waits for the shared-store sync to finish. A successful manual save shows **Project saved.** If the cloud save is unavailable or rejects the write, the app keeps the local backup and shows **Cloud save failed. Project saved on this device.**
 
 Uploaded sales and inventory files are stored as parsed app data inside the selected store's Supabase state. Selecting the same store number on another device loads the same inventory counts, uploaded sales rows, parsed inventory rows, deleted items, edits, recommendations, and settings from Supabase.
 
@@ -83,7 +83,7 @@ Use **Settings > Inventory Tools > Clear Stock History** to remove only stock ad
 
 Run the SQL in `supabase-setup.sql` in your Supabase SQL editor. The same inventory history table setup is also available as `../supabase/migrations/20260517143000_inventory_adjustment_history.sql` if you manage Supabase migrations outside GitHub Pages.
 
-If **Clear Stock History** says `Stock history is not set up yet. No history was cleared.`, the live Supabase project is missing `inventory_adjustment_history`. Run the setup SQL/migration, then refresh the app and try again.
+If **Clear Stock History** says `Stock history is not available for this store.`, the live project is missing `inventory_adjustment_history`. Run the setup SQL/migration, then refresh the app and try again.
 
 The included RLS policies are for personal testing only. They are public and unauthenticated, so they are not safe for production or public sharing. Add Supabase Auth and store-scoped policies before sharing the app widely.
 
