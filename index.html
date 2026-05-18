@@ -7,7 +7,7 @@
     <title>Wine Inventory</title>
     <link rel="icon" href="images.ico" type="image/x-icon" />
     <link rel="shortcut icon" href="images.ico" type="image/x-icon" />
-    <link rel="stylesheet" href="styles.css?v=20260517-add-product" />
+    <link rel="stylesheet" href="styles.css?v=20260517-help-restore" />
   </head>
   <body>
     <div class="app-shell">
@@ -37,7 +37,7 @@
         </button>
         <button id="addStoreButton" class="secondary-button">Add Store</button>
         <button id="refreshStoresButton" class="secondary-button">Refresh Stores</button>
-        <button id="reloadStoreButton" class="secondary-button">Reload Store Data</button>
+        <button id="reloadStoreButton" class="secondary-button">Restore Store Data</button>
         <span id="currentStoreText" class="small-muted">No store selected</span>
         <button id="settingsButton" class="ghost-button settings-gear" title="Settings" aria-label="Open settings">
           &#9881;
@@ -106,14 +106,16 @@
 
         <section id="settingsTab" class="tab-panel">
           <div class="settings-grid">
-            <section class="card">
+            <section class="card store-tools-card">
               <h2>Store Tools</h2>
-              <button id="settingsReloadStoreButton" class="secondary-button">
-                Reload Store Data
-              </button>
-              <button id="helpGuideButton" class="secondary-button">
-                Help & User Guide
-              </button>
+              <div class="store-tools-actions">
+                <button id="settingsReloadStoreButton" class="secondary-button">
+                  Restore Store Data
+                </button>
+                <button id="helpGuideButton" class="secondary-button">
+                  Help & User Guide
+                </button>
+              </div>
               <p class="small-muted">
                 View instructions, troubleshooting, and app feature explanations.
               </p>
@@ -233,7 +235,7 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260517-add-product"></script>
-    <script src="app.js?v=20260517-add-product"></script>
+    <script src="catalog.js?v=20260517-help-restore"></script>
+    <script src="app.js?v=20260517-help-restore"></script>
   </body>
 </html>

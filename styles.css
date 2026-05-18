@@ -877,6 +877,20 @@ tr.sale-item-row .sale-badge {
   width: fit-content;
 }
 
+.store-tools-card {
+  grid-column: span 2;
+}
+
+.store-tools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.store-tools-actions .secondary-button {
+  flex: 1 1 180px;
+}
+
 .field-row {
   display: grid;
   gap: 6px;
@@ -945,6 +959,10 @@ tr.sale-item-row .sale-badge {
   .section-heading,
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+
+  .store-tools-card {
+    grid-column: auto;
   }
 
   .summary-grid {
