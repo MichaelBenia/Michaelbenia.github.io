@@ -830,8 +830,15 @@ tr.sale-item-row .sale-badge {
 .ordering-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 10px;
+}
+
+.ordering-sort-toggle {
+  border-color: var(--border);
+  background: var(--surface);
+  color: var(--text);
 }
 
 .unmatched-card {

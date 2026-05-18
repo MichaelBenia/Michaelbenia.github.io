@@ -73,6 +73,7 @@ const dom = {
   orderingTable: document.getElementById("orderingTable"),
   unmatchedList: document.getElementById("unmatchedList"),
   applyDeductionButton: document.getElementById("applyDeductionButton"),
+  sortOrderingBySalesToggle: document.getElementById("sortOrderingBySalesToggle"),
   deductionStatus: document.getElementById("deductionStatus"),
   toast: document.getElementById("toast"),
   targetWeeksInput: document.getElementById("targetWeeksInput"),
@@ -139,7 +140,12 @@ function defaultState() {
     },
     inventoryHistory: [],
     stockHistoryClearedAt: null,
-    settings: { targetWeeks: DEFAULT_TARGET_WEEKS, showSaleOnly: false, inventorySearch: "" },
+    settings: {
+      targetWeeks: DEFAULT_TARGET_WEEKS,
+      showSaleOnly: false,
+      inventorySearch: "",
+      sortOrderingBySales: false,
+    },
     lastSaved: null,
   };
 }
@@ -1159,6 +1165,7 @@ function loadState(storeNumber = currentStoreNumber || "") {
         targetWeeks: Number(parsed.settings?.targetWeeks) || DEFAULT_TARGET_WEEKS,
         showSaleOnly: parsed.settings?.showSaleOnly === true,
         inventorySearch: cleanText(parsed.settings?.inventorySearch || ""),
+        sortOrderingBySales: parsed.settings?.sortOrderingBySales === true,
       },
       lastSaved: parsed.lastSaved || null,
     };
@@ -1441,6 +1448,11 @@ function bindEvents() {
   on(dom.saleOnlyToggle, "change", () => {
     state.settings.showSaleOnly = dom.saleOnlyToggle.checked;
     render();
+    saveState();
+  });
+  on(dom.sortOrderingBySalesToggle, "change", () => {
+    state.settings.sortOrderingBySales = dom.sortOrderingBySalesToggle.checked;
+    renderOrderingTable();
     saveState();
   });
 
@@ -1989,7 +2001,7 @@ function recalculateRecommendations() {
   const salesById = new Map(state.processing.matched.map(item => [item.id, item]));
   state.processing.recommendations = sortProducts(state.inventory.products)
     .filter(product => productCategoryInfo(product))
-    .map(product => {
+    .map((product, originalOrderIndex) => {
       const sales = salesById.get(product.id);
       const unitsSold = safeFiniteNumber(sales?.unitsSold, 0);
       const frontUnits = stockQuantityNumber(product.quantity);
@@ -2019,6 +2031,7 @@ function recalculateRecommendations() {
       return {
         id: product.id,
         name: product.name,
+        originalOrderIndex,
         unitsSold,
         unitsPerCase: caseSize || null,
         front: frontUnits ?? 0,
@@ -2142,6 +2155,7 @@ function render() {
   renderLastSaved();
   dom.targetWeeksInput.value = state.settings.targetWeeks;
   dom.saleOnlyToggle.checked = state.settings.showSaleOnly === true;
+  dom.sortOrderingBySalesToggle.checked = state.settings.sortOrderingBySales === true;
   dom.inventorySearchInput.value = state.settings.inventorySearch || "";
   dom.clearInventorySearchButton.hidden = !cleanText(state.settings.inventorySearch || "");
   renderInventorySummary();
@@ -2332,9 +2346,7 @@ function inventoryRowHtml(product) {
 }
 
 function renderOrderingTable() {
-  const recommendations = state.settings.showSaleOnly
-    ? (state.processing.recommendations || []).filter(item => getProduct(item.id)?.onSale)
-    : state.processing.recommendations || [];
+  const recommendations = displayedOrderingRecommendations();
   if (!recommendations.length) {
     dom.orderingTable.innerHTML = `<div class="empty-state">Upload a sales file to calculate order recommendations from the built-in catalog.</div>`;
     dom.applyDeductionButton.disabled = true;
@@ -2355,29 +2367,74 @@ function renderOrderingTable() {
     <th class="center-cell">Order Cases</th><th class="center-cell">Unit Order</th>
     <th class="center-cell">Override</th><th>Status</th><th>Notes</th>
   </tr></thead><tbody>`;
-  for (const section of CATEGORY_CONFIG) {
-    const rows = recommendations.filter(item => productCategoryInfo(getProduct(item.id) || item)?.name === section.name);
-    if (!rows.length) continue;
-    html += `<tr class="category-row"><td colspan="10">${escapeHtml(section.name)}</td></tr>`;
-    for (const item of rows) {
-      const statusClass = item.status === "Order Needed" ? "status-order" : "status-ok";
-      const onSale = getProduct(item.id)?.onSale === true;
-      html += `<tr class="${onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(item.id)}" title="${onSale ? "This item is currently marked as on sale." : ""}">
-        <td>${escapeHtml(item.id)}</td>
-        <td class="desc-cell product-name-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}${onSale ? saleBadge({ onSale: true }) : ""}</td>
-        <td class="number-cell">${formatNumber(item.unitsSold)}</td>
-        <td class="number-cell">${formatOrderingNumber(item.totalUnitsOnHand)}</td>
-        <td class="number-cell weeks-cell">${escapeHtml(formatWeeksOfStock(item))}</td>
-        <td class="number-cell">${item.orderCases}</td>
-        <td class="number-cell">${formatNumber(item.unitOrder)}</td>
-        <td class="number-cell"><input class="small-number" type="number" min="0" data-field="overrideCases" data-id="${escapeHtml(item.id)}" value="${escapeHtml(item.overrideCases ?? "")}" /></td>
-        <td><span class="status-pill ${statusClass}">${escapeHtml(item.status)}</span></td>
-        <td class="desc-cell" title="${escapeHtml(item.notes || "")}">${escapeHtml(item.notes || "")}</td>
-      </tr>`;
+  if (state.settings.sortOrderingBySales === true) {
+    for (const item of recommendations) {
+      html += orderingRecommendationRow(item);
+    }
+  } else {
+    for (const section of CATEGORY_CONFIG) {
+      const rows = recommendations.filter(item => productCategoryInfo(getProduct(item.id) || item)?.name === section.name);
+      if (!rows.length) continue;
+      html += `<tr class="category-row"><td colspan="10">${escapeHtml(section.name)}</td></tr>`;
+      for (const item of rows) {
+        html += orderingRecommendationRow(item);
+      }
     }
   }
   html += "</tbody></table>";
   dom.orderingTable.innerHTML = html;
+}
+
+function displayedOrderingRecommendations() {
+  const baseRecommendations = state.settings.showSaleOnly
+    ? (state.processing.recommendations || []).filter(item => getProduct(item.id)?.onSale)
+    : state.processing.recommendations || [];
+  const recommendations = [...baseRecommendations];
+  if (state.settings.sortOrderingBySales !== true) {
+    return recommendations.sort(compareOrderingDefaultOrder);
+  }
+  return recommendations.sort((a, b) => {
+    const salesDifference = safeFiniteNumber(b.unitsSold, 0) - safeFiniteNumber(a.unitsSold, 0);
+    if (salesDifference !== 0) return salesDifference;
+    return compareOrderingDefaultOrder(a, b);
+  });
+}
+
+function compareOrderingDefaultOrder(a, b) {
+  if (a?.id === b?.id) return 0;
+  const aIndex = orderingOriginalIndex(a);
+  const bIndex = orderingOriginalIndex(b);
+  if (aIndex !== bIndex) return aIndex - bIndex;
+  const sorted = sortProducts([getProduct(a.id) || a, getProduct(b.id) || b]);
+  if (sorted[0]?.id === a.id) return -1;
+  if (sorted[0]?.id === b.id) return 1;
+  return 0;
+}
+
+function orderingOriginalIndex(item) {
+  if (Number.isFinite(Number(item?.originalOrderIndex))) return Number(item.originalOrderIndex);
+  const product = getProduct(item?.id);
+  if (!product) return Number.MAX_SAFE_INTEGER;
+  const sortedProducts = sortProducts(state.inventory.products);
+  const index = sortedProducts.findIndex(row => row.id === product.id);
+  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+}
+
+function orderingRecommendationRow(item) {
+  const statusClass = item.status === "Order Needed" ? "status-order" : "status-ok";
+  const onSale = getProduct(item.id)?.onSale === true;
+  return `<tr class="${onSale ? "sale-item-row" : ""}" data-id="${escapeHtml(item.id)}" title="${onSale ? "This item is currently marked as on sale." : ""}">
+    <td>${escapeHtml(item.id)}</td>
+    <td class="desc-cell product-name-cell" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}${onSale ? saleBadge({ onSale: true }) : ""}</td>
+    <td class="number-cell">${formatNumber(item.unitsSold)}</td>
+    <td class="number-cell">${formatOrderingNumber(item.totalUnitsOnHand)}</td>
+    <td class="number-cell weeks-cell">${escapeHtml(formatWeeksOfStock(item))}</td>
+    <td class="number-cell">${item.orderCases}</td>
+    <td class="number-cell">${formatNumber(item.unitOrder)}</td>
+    <td class="number-cell"><input class="small-number" type="number" min="0" data-field="overrideCases" data-id="${escapeHtml(item.id)}" value="${escapeHtml(item.overrideCases ?? "")}" /></td>
+    <td><span class="status-pill ${statusClass}">${escapeHtml(item.status)}</span></td>
+    <td class="desc-cell" title="${escapeHtml(item.notes || "")}">${escapeHtml(item.notes || "")}</td>
+  </tr>`;
 }
 
 function renderUnmatched() {
