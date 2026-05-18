@@ -1,12 +1,12 @@
-# Wine Inventory Help & User Guide
+﻿# OrderWise Help & User Guide
 
-Count smarter. Order faster.
+Smarter ordering starts here.
 
 Created by Michael Benia WR358
 
 ## App overview
 
-Wine Inventory helps retail staff count wine inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when online sync is available, and sales/order work stays separated from stock counts.
+OrderWise helps retail staff count inventory, upload weekly sales files, review ordering recommendations, and export inventory or order lists. The app is built for quick in-store use: products are grouped into the curated lineup, counts are saved locally and synced by store when online sync is available, and sales/order work stays separated from stock counts.
 
 [Screenshot: Inventory page]
 
@@ -221,3 +221,4 @@ Backstock is full cases in storage. Front Units are individual units available o
 For help with store workflow, file formats, or app setup, contact the app owner:
 
 Michael Benia WR358
+

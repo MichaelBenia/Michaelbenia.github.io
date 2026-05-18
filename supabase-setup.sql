@@ -1,4 +1,4 @@
--- Supabase setup for Wine Order Count.
+﻿-- Supabase setup for OrderWise.
 -- These public RLS policies are for personal testing only and are not secure
 -- for public production use. Add authentication and store-scoped policies
 -- before sharing this app broadly.
@@ -164,3 +164,4 @@ begin
 exception
   when duplicate_object then null;
 end $$;
+

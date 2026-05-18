@@ -1,6 +1,6 @@
-# Wine Order Count Static Web App
+﻿# OrderWise Static Web App
 
-This folder contains a standalone HTML/CSS/JavaScript version of Wine Order Count for GitHub Pages.
+This folder contains a standalone HTML/CSS/JavaScript version of OrderWise for GitHub Pages.
 
 ## Files
 
@@ -178,3 +178,4 @@ The app exports CSV files fully in the browser:
 - order recommendations
 
 No data is uploaded during export.
+
