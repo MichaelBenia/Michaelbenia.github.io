@@ -1,4 +1,4 @@
-const CACHE_NAME = "wine-order-count-static-v40";
+const CACHE_NAME = "wine-order-count-static-v42";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,6 +6,7 @@ const ASSETS = [
   "./catalog.js",
   "./app.js",
   "./help.pdf",
+  "./assets/help/help.html",
   "./assets/help/user_guide.pdf",
   "./images.ico",
   "./xlsx.full.min.js",

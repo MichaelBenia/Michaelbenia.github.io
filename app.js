@@ -12,6 +12,8 @@ const CACHE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const SUPABASE_URL = "https://bhuwrwqkwuuzjomskjky.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_iiViQ666fswJ84JaNeNIiw_pHHWR_8A";
 const DEFAULT_TARGET_WEEKS = 2;
+const HELP_GUIDE_URL = "https://michaelbenia.github.io/help.html";
+const LOCAL_HELP_GUIDE_URL = "assets/help/help.html";
 const SKU_HEADER_ALIASES = [
   "jde",
   "sku",
@@ -59,14 +61,12 @@ const dom = {
   refreshStoresButton: document.getElementById("refreshStoresButton"),
   reloadStoreButton: document.getElementById("reloadStoreButton"),
   mainHelpGuideButton: document.getElementById("mainHelpGuideButton"),
-  settingsReloadStoreButton: document.getElementById("settingsReloadStoreButton"),
   currentStoreText: document.getElementById("currentStoreText"),
   syncStatusText: document.getElementById("syncStatusText"),
   saveProgressButton: document.getElementById("saveProgressButton"),
   exportInventoryButton: document.getElementById("exportInventoryButton"),
   exportOrdersButton: document.getElementById("exportOrdersButton"),
   settingsButton: document.getElementById("settingsButton"),
-  addProductButton: document.getElementById("addProductButton"),
   statusBanner: document.getElementById("statusBanner"),
   lastSavedText: document.getElementById("lastSavedText"),
   inventorySearchInput: document.getElementById("inventorySearchInput"),
@@ -92,7 +92,6 @@ const dom = {
   restoreDeletedItemsButton: document.getElementById("restoreDeletedItemsButton"),
   clearAllButton: document.getElementById("clearAllButton"),
   clearAppCacheButton: document.getElementById("clearAppCacheButton"),
-  helpGuideButton: document.getElementById("helpGuideButton"),
   masterProductListButton: document.getElementById("masterProductListButton"),
   masterProductModal: document.getElementById("masterProductModal"),
   closeMasterProductModalButton: document.getElementById("closeMasterProductModalButton"),
@@ -1502,7 +1501,6 @@ function bindEvents() {
   on(dom.refreshStoresButton, "click", refreshStoresAndCurrentData);
   on(dom.reloadStoreButton, "click", reloadCurrentStoreData);
   on(dom.mainHelpGuideButton, "click", openHelpGuide);
-  on(dom.settingsReloadStoreButton, "click", reloadCurrentStoreData);
   on(dom.uploadSalesButton, "click", () => dom.salesInput?.click());
   on(dom.uploadInventoryButton, "click", () => dom.inventoryInput?.click());
   on(dom.salesInput, "change", event => handleSalesFile(event.target.files?.[0]));
@@ -1511,7 +1509,6 @@ function bindEvents() {
   on(dom.exportInventoryButton, "click", exportInventoryCsv);
   on(dom.exportOrdersButton, "click", exportOrdersCsv);
   on(dom.settingsButton, "click", () => activateTab("settings"));
-  on(dom.addProductButton, "click", addProductToMainList);
   on(dom.makeDefaultStoreButton, "click", makeCurrentStoreDefault);
   on(dom.clearDefaultStoreButton, "click", clearDefaultStore);
   on(dom.applyDeductionButton, "click", applySalesDeduction);
@@ -1522,7 +1519,6 @@ function bindEvents() {
   on(dom.restoreDeletedItemsButton, "click", restoreDeletedInventoryItems);
   on(dom.clearAllButton, "click", clearAllLocalData);
   on(dom.clearAppCacheButton, "click", clearAppCache);
-  on(dom.helpGuideButton, "click", openHelpGuide);
   on(dom.masterProductListButton, "click", openMasterProductList);
   on(dom.closeMasterProductModalButton, "click", closeMasterProductList);
   on(dom.refreshMasterProductsButton, "click", refreshMasterProductList);
@@ -3672,8 +3668,42 @@ async function clearAppCache() {
   }
 }
 
-function openHelpGuide() {
-  window.open("assets/help/user_guide.pdf", "_blank", "noopener");
+async function openHelpGuide() {
+  const helpWindow = window.open("", "_blank");
+  if (helpWindow) helpWindow.opener = null;
+  try {
+    const response = await fetch(HELP_GUIDE_URL, { method: "HEAD", cache: "no-store" });
+    if (response.ok) {
+      if (helpWindow) {
+        helpWindow.location.href = HELP_GUIDE_URL;
+      } else {
+        window.location.href = HELP_GUIDE_URL;
+      }
+      return;
+    }
+    console.warn("Hosted help guide was unavailable:", response.status);
+  } catch (error) {
+    console.warn("Hosted help guide could not be checked:", error);
+  }
+
+  try {
+    const localResponse = await fetch(LOCAL_HELP_GUIDE_URL, { method: "HEAD", cache: "no-store" });
+    if (localResponse.ok) {
+      if (helpWindow) {
+        helpWindow.location.href = LOCAL_HELP_GUIDE_URL;
+      } else {
+        window.location.href = LOCAL_HELP_GUIDE_URL;
+      }
+      return;
+    }
+    console.warn("Bundled help guide was unavailable:", localResponse.status);
+  } catch (error) {
+    console.warn("Bundled help guide could not be checked:", error);
+  }
+
+  if (helpWindow) helpWindow.close();
+  setStatus("Could not open the Help & User Guide.", true);
+  showToast("Could not open the Help & User Guide.");
 }
 
 function exportInventoryCsv() {

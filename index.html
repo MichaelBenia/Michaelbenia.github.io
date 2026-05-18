@@ -68,9 +68,6 @@
                 <input id="saleOnlyToggle" type="checkbox" />
                 Show Only Sale Items
               </label>
-              <button id="addProductButton" class="secondary-button">
-                Add Product
-              </button>
               <div id="inventorySummary" class="summary-grid"></div>
             </div>
           </div>
@@ -111,31 +108,14 @@
 
         <section id="settingsTab" class="tab-panel">
           <div class="settings-grid">
-            <section class="card store-tools-card">
-              <h2>Store Tools</h2>
-              <div class="store-tools-actions">
-                <button id="settingsReloadStoreButton" class="secondary-button">
-                  Restore Store Data
-                </button>
-                <button id="helpGuideButton" class="secondary-button">
-                  Help & User Guide
-                </button>
-              </div>
-              <p class="small-muted">
-                View instructions, troubleshooting, and app feature explanations.
-              </p>
-            </section>
-            <section class="card store-tools-card">
-              <h2>Master Product List</h2>
-              <p class="small-muted">
-                View, add, edit, or delete products used for inventory and ordering.
-              </p>
+            <section class="card">
+              <h2>Inventory Tools</h2>
               <button id="masterProductListButton" class="secondary-button">
                 Master Product List
               </button>
-            </section>
-            <section class="card">
-              <h2>Inventory Tools</h2>
+              <p class="small-muted">
+                View, add, edit, or delete products used for inventory and ordering.
+              </p>
               <input id="inventoryFileInput" type="file" accept=".xlsx,.csv" hidden />
               <button id="uploadInventoryButton" class="secondary-button">
                 Upload Inventory File
