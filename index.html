@@ -38,6 +38,7 @@
         <button id="addStoreButton" class="secondary-button">Add Store</button>
         <button id="refreshStoresButton" class="secondary-button">Refresh Stores</button>
         <button id="reloadStoreButton" class="secondary-button">Restore Store Data</button>
+        <button id="mainHelpGuideButton" class="secondary-button">Help & User Guide</button>
         <span id="currentStoreText" class="small-muted">No store selected</span>
         <button id="settingsButton" class="ghost-button settings-gear" title="Settings" aria-label="Open settings">
           &#9881;
@@ -124,6 +125,15 @@
                 View instructions, troubleshooting, and app feature explanations.
               </p>
             </section>
+            <section class="card store-tools-card">
+              <h2>Master Product List</h2>
+              <p class="small-muted">
+                View, add, edit, or delete products used for inventory and ordering.
+              </p>
+              <button id="masterProductListButton" class="secondary-button">
+                Master Product List
+              </button>
+            </section>
             <section class="card">
               <h2>Inventory Tools</h2>
               <input id="inventoryFileInput" type="file" accept=".xlsx,.csv" hidden />
@@ -189,7 +199,7 @@
                 Clear App Cache
               </button>
               <p class="small-muted">
-                Clears cached website files and reloads the app. Saved store data remains available.
+                Refresh saved app data without signing out.
               </p>
             </section>
             <section class="card">
@@ -231,6 +241,51 @@
       </section>
     </div>
 
+    <div id="masterProductModal" class="modal-backdrop" hidden>
+      <section class="master-product-screen" role="dialog" aria-modal="true" aria-labelledby="masterProductModalTitle">
+        <div class="modal-header">
+          <div>
+            <h2 id="masterProductModalTitle">Master Product List</h2>
+            <p class="small-muted">View, add, edit, or delete products used for inventory and ordering.</p>
+          </div>
+          <button id="closeMasterProductModalButton" class="icon-action" aria-label="Close master product list">&times;</button>
+        </div>
+        <div class="master-product-toolbar">
+          <input id="masterProductSearchInput" type="search" placeholder="Search products" autocomplete="off" />
+          <button id="refreshMasterProductsButton" class="secondary-button">Refresh</button>
+          <button id="addMasterProductButton" class="secondary-button">Add Product</button>
+        </div>
+        <form id="masterProductForm" class="master-product-form" hidden>
+          <h3 id="masterProductFormTitle">Add Product</h3>
+          <label>
+            SKU
+            <input id="masterProductSkuInput" type="text" autocomplete="off" />
+          </label>
+          <label>
+            Product name
+            <input id="masterProductNameInput" type="text" autocomplete="off" />
+          </label>
+          <label>
+            Size/type
+            <input id="masterProductSizeInput" type="text" autocomplete="off" placeholder="750mL, 1.5L, 4L" />
+          </label>
+          <label>
+            Case size
+            <input id="masterProductCaseSizeInput" type="number" min="1" step="1" />
+          </label>
+          <label>
+            Category
+            <select id="masterProductCategoryInput"></select>
+          </label>
+          <div class="master-product-form-actions">
+            <button id="saveMasterProductButton" class="secondary-button save-action" type="submit">Save Product</button>
+            <button id="cancelMasterProductButton" class="secondary-button" type="button">Cancel</button>
+          </div>
+        </form>
+        <div id="masterProductList" class="master-product-list"></div>
+      </section>
+    </div>
+
     <script src="xlsx.full.min.js"></script>
     <script>
       if (!window.XLSX) {
@@ -239,8 +294,8 @@
         );
       }
     </script>
-    <script src="catalog.js?v=20260517-help-restore"></script>
-    <script src="app.js?v=20260517-help-restore"></script>
+    <script src="catalog.js?v=20260518-master-products"></script>
+    <script src="app.js?v=20260518-master-products"></script>
   </body>
 </html>
 

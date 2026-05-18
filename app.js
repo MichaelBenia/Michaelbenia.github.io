@@ -4,8 +4,11 @@ const STORE_REGISTRY_KEY = "wine-order-count-store-registry-v1";
 const DEFAULT_STORE_KEY = "defaultStoreNumber";
 const UNSELECTED_STORE_CACHE_KEY = "__unselected__";
 const GLOBAL_CUSTOM_PRODUCTS_KEY = "wine-order-count-global-custom-products-v1";
+const GLOBAL_PRODUCT_OVERRIDES_KEY = "wine-order-count-global-product-overrides-v1";
+const GLOBAL_DELETED_PRODUCTS_KEY = "wine-order-count-global-deleted-products-v1";
 const GLOBAL_PRODUCT_STORE_NUMBER = "__global_product_catalog__";
 const SUPABASE_SAVE_DEBOUNCE_MS = 750;
+const CACHE_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const SUPABASE_URL = "https://bhuwrwqkwuuzjomskjky.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_iiViQ666fswJ84JaNeNIiw_pHHWR_8A";
 const DEFAULT_TARGET_WEEKS = 2;
@@ -55,6 +58,7 @@ const dom = {
   addStoreButton: document.getElementById("addStoreButton"),
   refreshStoresButton: document.getElementById("refreshStoresButton"),
   reloadStoreButton: document.getElementById("reloadStoreButton"),
+  mainHelpGuideButton: document.getElementById("mainHelpGuideButton"),
   settingsReloadStoreButton: document.getElementById("settingsReloadStoreButton"),
   currentStoreText: document.getElementById("currentStoreText"),
   syncStatusText: document.getElementById("syncStatusText"),
@@ -89,6 +93,22 @@ const dom = {
   clearAllButton: document.getElementById("clearAllButton"),
   clearAppCacheButton: document.getElementById("clearAppCacheButton"),
   helpGuideButton: document.getElementById("helpGuideButton"),
+  masterProductListButton: document.getElementById("masterProductListButton"),
+  masterProductModal: document.getElementById("masterProductModal"),
+  closeMasterProductModalButton: document.getElementById("closeMasterProductModalButton"),
+  masterProductSearchInput: document.getElementById("masterProductSearchInput"),
+  refreshMasterProductsButton: document.getElementById("refreshMasterProductsButton"),
+  addMasterProductButton: document.getElementById("addMasterProductButton"),
+  masterProductForm: document.getElementById("masterProductForm"),
+  masterProductFormTitle: document.getElementById("masterProductFormTitle"),
+  masterProductSkuInput: document.getElementById("masterProductSkuInput"),
+  masterProductNameInput: document.getElementById("masterProductNameInput"),
+  masterProductSizeInput: document.getElementById("masterProductSizeInput"),
+  masterProductCaseSizeInput: document.getElementById("masterProductCaseSizeInput"),
+  masterProductCategoryInput: document.getElementById("masterProductCategoryInput"),
+  saveMasterProductButton: document.getElementById("saveMasterProductButton"),
+  cancelMasterProductButton: document.getElementById("cancelMasterProductButton"),
+  masterProductList: document.getElementById("masterProductList"),
   saleOnlyToggle: document.getElementById("saleOnlyToggle"),
   settingsExportInventoryButton: document.getElementById("settingsExportInventoryButton"),
   settingsExportOrdersButton: document.getElementById("settingsExportOrdersButton"),
@@ -100,6 +120,8 @@ const dom = {
 let storeRegistry = loadStoreRegistry();
 let currentStoreNumber = storeRegistry.currentStore;
 let globalCustomProducts = loadLocalGlobalCustomProducts();
+let globalProductOverrides = loadLocalGlobalProductOverrides();
+let globalDeletedProducts = loadLocalGlobalDeletedProducts();
 let globalSaleFlags = {};
 let globalSaleTableAvailable = true;
 let state = defaultState();
@@ -114,6 +136,9 @@ let currentStoreChannel = null;
 let currentSaleStatusChannel = null;
 let saleClearInProgress = false;
 let stockHistoryClearInProgress = false;
+let masterProductEditingSku = null;
+let masterProductRefreshInProgress = false;
+let lastDataRefreshAt = 0;
 
 bindEvents();
 render();
@@ -158,8 +183,26 @@ function loadLocalGlobalCustomProducts() {
   }
 }
 
+function loadLocalGlobalProductOverrides() {
+  try {
+    return normalizeProductOverrides(JSON.parse(localStorage.getItem(GLOBAL_PRODUCT_OVERRIDES_KEY) || "{}"));
+  } catch {
+    return {};
+  }
+}
+
+function loadLocalGlobalDeletedProducts() {
+  try {
+    return [...new Set((JSON.parse(localStorage.getItem(GLOBAL_DELETED_PRODUCTS_KEY) || "[]") || []).map(normalizeUpc).filter(Boolean))];
+  } catch {
+    return [];
+  }
+}
+
 function saveLocalGlobalCustomProducts() {
   localStorage.setItem(GLOBAL_CUSTOM_PRODUCTS_KEY, JSON.stringify(globalCustomProducts));
+  localStorage.setItem(GLOBAL_PRODUCT_OVERRIDES_KEY, JSON.stringify(globalProductOverrides));
+  localStorage.setItem(GLOBAL_DELETED_PRODUCTS_KEY, JSON.stringify(globalDeletedProducts));
 }
 
 function normalizeCustomProducts(products = []) {
@@ -175,6 +218,8 @@ function normalizeCustomProducts(products = []) {
         sku,
         description,
         category,
+        size: cleanText(product?.size || product?.format || product?.volume || product?.bottleSize || product?.bottle_size || ""),
+        caseSize: parseWholeNumber(product?.caseSize || product?.case_size || product?.unitsPerCase || product?.units_per_case || "") || null,
         orderIndex: Number.isFinite(Number(product?.orderIndex)) ? Number(product.orderIndex) : index,
         createdAt: product?.createdAt || new Date().toISOString(),
       };
@@ -189,6 +234,37 @@ function normalizeCustomProducts(products = []) {
       if (a.orderIndex !== b.orderIndex) return a.orderIndex - b.orderIndex;
       return a.description.localeCompare(b.description);
     });
+}
+
+function normalizeProductOverrides(overrides = {}) {
+  const normalized = {};
+  for (const [sourceSku, override] of Object.entries(overrides || {})) {
+    const sku = normalizeUpc(sourceSku);
+    if (!sku || !override || typeof override !== "object") continue;
+    normalized[sku] = {
+      ...override,
+      sku: normalizeUpc(override.sku || sku),
+      description: cleanText(override.description || override.name || ""),
+      category: CATEGORY_ORDER.includes(override.category) ? override.category : cleanText(override.category || ""),
+      size: cleanText(override.size || override.format || override.volume || ""),
+      caseSize: parseWholeNumber(override.caseSize || override.case_size || override.unitsPerCase || "") || null,
+    };
+  }
+  return normalized;
+}
+
+function combinedProductOverrides(meta = state) {
+  return {
+    ...(globalProductOverrides || {}),
+    ...(meta.productOverrides || {}),
+  };
+}
+
+function combinedDeletedProducts(meta = state) {
+  return new Set([
+    ...(globalDeletedProducts || []),
+    ...(meta.deletedItems || []),
+  ].map(normalizeUpc).filter(Boolean));
 }
 
 function loadStoreRegistry() {
@@ -316,28 +392,42 @@ function isInternalStoreNumber(storeNumber) {
   return text === GLOBAL_PRODUCT_STORE_NUMBER || /^__.*__$/.test(text);
 }
 
-async function loadGlobalCustomProductsFromCloud() {
+async function loadGlobalProductListFromCloud() {
   const remoteState = await getSupabaseStoreState(GLOBAL_PRODUCT_STORE_NUMBER);
-  return normalizeCustomProducts(remoteState?.customProducts || remoteState?.products || []);
+  return {
+    customProducts: normalizeCustomProducts(remoteState?.customProducts || remoteState?.products || []),
+    productOverrides: normalizeProductOverrides(remoteState?.productOverrides || remoteState?.overrides || {}),
+    deletedItems: [...new Set((remoteState?.deletedItems || remoteState?.deletedProducts || []).map(normalizeUpc).filter(Boolean))],
+  };
 }
 
 async function refreshGlobalCustomProducts({ silent = false } = {}) {
   try {
-    const remoteProducts = await withTimeout(loadGlobalCustomProductsFromCloud(), 7000, "Product list loading timed out");
-    if (remoteProducts.length || !globalCustomProducts.length) {
-      globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, ...remoteProducts]);
-      saveLocalGlobalCustomProducts();
+    const remoteList = await withTimeout(loadGlobalProductListFromCloud(), 7000, "Product list loading timed out");
+    if (remoteList.customProducts.length || !globalCustomProducts.length) {
+      globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, ...remoteList.customProducts]);
     }
+    globalProductOverrides = normalizeProductOverrides({
+      ...globalProductOverrides,
+      ...remoteList.productOverrides,
+    });
+    globalDeletedProducts = [...new Set([...(globalDeletedProducts || []), ...remoteList.deletedItems].map(normalizeUpc).filter(Boolean))];
+    saveLocalGlobalCustomProducts();
     state.inventory.products = mergeProductsWithCatalog(state.inventory?.products || [], state);
+    refreshProcessingFromActiveSales();
+    lastDataRefreshAt = Date.now();
     if (!silent) {
       render();
       showToast("Product list refreshed.");
     }
     return true;
   } catch (error) {
-    console.warn("Shared product list could not be loaded; using local product list.", error);
+    console.warn("Product list could not be loaded; using local product list.", error);
     globalCustomProducts = loadLocalGlobalCustomProducts();
+    globalProductOverrides = loadLocalGlobalProductOverrides();
+    globalDeletedProducts = loadLocalGlobalDeletedProducts();
     state.inventory.products = mergeProductsWithCatalog(state.inventory?.products || [], state);
+    refreshProcessingFromActiveSales();
     return false;
   }
 }
@@ -352,6 +442,8 @@ async function saveGlobalCustomProductsToCloud() {
       store_number: GLOBAL_PRODUCT_STORE_NUMBER,
       app_state: {
         customProducts: globalCustomProducts,
+        productOverrides: globalProductOverrides,
+        deletedItems: globalDeletedProducts,
         updatedAt,
       },
       updated_at: updatedAt,
@@ -901,13 +993,15 @@ async function createSupabaseStoreIfMissing(storeNumber) {
 }
 
 function catalogProducts(meta = {}) {
-  const overrides = meta.productOverrides || {};
-  const deleted = new Set((meta.deletedItems || []).map(normalizeUpc));
+  const overrides = combinedProductOverrides(meta);
+  const deleted = combinedDeletedProducts(meta);
   const products = PRODUCT_CATALOG.map(product => ({
     id: normalizeUpc(overrides[normalizeUpc(product.sku)]?.sku || product.sku),
     sourceSku: normalizeUpc(product.sku),
     name: cleanText(overrides[normalizeUpc(product.sku)]?.description || product.description),
-    category: product.category,
+    category: overrides[normalizeUpc(product.sku)]?.category || product.category,
+    size: overrides[normalizeUpc(product.sku)]?.size || parseProductSize(product.description),
+    unitsPerCase: overrides[normalizeUpc(product.sku)]?.caseSize || null,
     quantity: 0,
     originalQuantity: 0,
     backstock: 0,
@@ -924,7 +1018,9 @@ function catalogProducts(meta = {}) {
       id: normalizeUpc(overrides[normalizeUpc(product.sku)]?.sku || product.sku),
       sourceSku: normalizeUpc(product.sku),
       name: cleanText(overrides[normalizeUpc(product.sku)]?.description || product.description),
-      category: product.category || "Other Products",
+      category: overrides[normalizeUpc(product.sku)]?.category || product.category || "Other Products",
+      size: overrides[normalizeUpc(product.sku)]?.size || product.size || parseProductSize(product.description),
+      unitsPerCase: overrides[normalizeUpc(product.sku)]?.caseSize || product.caseSize || null,
       quantity: 0,
       originalQuantity: 0,
       backstock: 0,
@@ -942,8 +1038,8 @@ function catalogProducts(meta = {}) {
 }
 
 function mergeProductsWithCatalog(products, meta = state) {
-  const overrides = meta.productOverrides || {};
-  const deleted = new Set((meta.deletedItems || []).map(normalizeUpc));
+  const overrides = combinedProductOverrides(meta);
+  const deleted = combinedDeletedProducts(meta);
   const byId = new Map();
   const bySource = new Map();
   for (const product of products || []) {
@@ -966,6 +1062,8 @@ function mergeProductsWithCatalog(products, meta = state) {
       sku: product.sku,
       description: product.description,
       category: product.category || "Other Products",
+      size: product.size || parseProductSize(product.description),
+      caseSize: product.caseSize || null,
       isCustomProduct: true,
     })),
   ];
@@ -981,7 +1079,9 @@ function mergeProductsWithCatalog(products, meta = state) {
       id,
       sourceSku,
       name: cleanText(override.description || catalogProduct.description),
-      category: catalogProduct.category,
+      category: override.category || catalogProduct.category,
+      size: override.size || catalogProduct.size || parseProductSize(catalogProduct.description),
+      unitsPerCase: override.caseSize || catalogProduct.caseSize || existing?.unitsPerCase || null,
       quantity: existing?.quantity ?? 0,
       originalQuantity: existing?.originalQuantity ?? existing?.quantity ?? 0,
       backstock: existing?.backstock ?? 0,
@@ -1028,7 +1128,7 @@ function sourceSkuForProduct(product, meta = state) {
   const id = normalizeUpc(product.sourceSku || product.id || product.sku);
   if (product.sourceSku) return id;
   const productId = normalizeUpc(product.id || product.sku);
-  const overrides = meta.productOverrides || {};
+  const overrides = combinedProductOverrides(meta);
   for (const [sourceSku, override] of Object.entries(overrides)) {
     if (normalizeUpc(override?.sku) === productId) return normalizeUpc(sourceSku);
   }
@@ -1401,6 +1501,7 @@ function bindEvents() {
   on(dom.addStoreButton, "click", addStore);
   on(dom.refreshStoresButton, "click", refreshStoresAndCurrentData);
   on(dom.reloadStoreButton, "click", reloadCurrentStoreData);
+  on(dom.mainHelpGuideButton, "click", openHelpGuide);
   on(dom.settingsReloadStoreButton, "click", reloadCurrentStoreData);
   on(dom.uploadSalesButton, "click", () => dom.salesInput?.click());
   on(dom.uploadInventoryButton, "click", () => dom.inventoryInput?.click());
@@ -1422,6 +1523,14 @@ function bindEvents() {
   on(dom.clearAllButton, "click", clearAllLocalData);
   on(dom.clearAppCacheButton, "click", clearAppCache);
   on(dom.helpGuideButton, "click", openHelpGuide);
+  on(dom.masterProductListButton, "click", openMasterProductList);
+  on(dom.closeMasterProductModalButton, "click", closeMasterProductList);
+  on(dom.refreshMasterProductsButton, "click", refreshMasterProductList);
+  on(dom.addMasterProductButton, "click", () => showMasterProductForm());
+  on(dom.masterProductSearchInput, "input", renderMasterProductList);
+  on(dom.masterProductForm, "submit", saveMasterProductFromForm);
+  on(dom.cancelMasterProductButton, "click", hideMasterProductForm);
+  on(dom.masterProductList, "click", handleMasterProductListClick);
   on(dom.closeHistoryModalButton, "click", closeInventoryHistory);
   on(dom.inventorySearchInput, "input", () => {
     state.settings.inventorySearch = dom.inventorySearchInput.value;
@@ -1437,6 +1546,9 @@ function bindEvents() {
   });
   on(dom.historyModal, "click", event => {
     if (event.target === dom.historyModal) closeInventoryHistory();
+  });
+  on(dom.masterProductModal, "click", event => {
+    if (event.target === dom.masterProductModal) closeMasterProductList();
   });
   on(dom.settingsExportInventoryButton, "click", exportInventoryCsv);
   on(dom.settingsExportOrdersButton, "click", exportOrdersCsv);
@@ -1474,6 +1586,10 @@ function bindEvents() {
     setSyncStatus("Offline mode");
     setStatus("Offline mode: changes are saved on this device and will sync when the connection returns.");
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshIfCacheStale();
+  });
+  window.addEventListener("focus", refreshIfCacheStale);
 }
 
 function on(element, eventName, handler) {
@@ -1520,6 +1636,7 @@ async function refreshStoresAndCurrentData() {
   if (selectedSupabaseStoreNumber()) {
     await loadSelectedStoreFromSupabase();
   }
+  await refreshAppData({ silent: true });
 }
 
 async function reloadCurrentStoreData() {
@@ -1529,6 +1646,32 @@ async function reloadCurrentStoreData() {
   }
   await refreshGlobalCustomProducts({ silent: true });
   await loadSelectedStoreFromSupabase();
+  await refreshAppData({ silent: true });
+}
+
+async function refreshAppData({ silent = false, refreshProducts = false } = {}) {
+  try {
+    if (refreshProducts) {
+      await refreshGlobalCustomProducts({ silent: true });
+    } else {
+      state.inventory.products = mergeProductsWithCatalog(state.inventory?.products || [], state);
+      refreshProcessingFromActiveSales();
+    }
+    lastDataRefreshAt = Date.now();
+    render();
+    if (!dom.masterProductModal?.hidden) renderMasterProductList();
+    if (!silent) showToast("Products refreshed.");
+    return true;
+  } catch (error) {
+    console.error("Could not refresh products:", error);
+    if (!silent) showToast("Could not refresh products.");
+    return false;
+  }
+}
+
+async function refreshIfCacheStale() {
+  if (Date.now() - lastDataRefreshAt < CACHE_REFRESH_INTERVAL_MS) return;
+  await refreshAppData({ silent: true, refreshProducts: true });
 }
 
 function renderAll() {
@@ -1833,6 +1976,7 @@ async function handleInventoryFile(file) {
       parsedRows: imported,
     };
     recalculateRecommendations();
+    await refreshAppData({ silent: true });
     const synced = await saveStateNowToSupabase({ successMessage: "Inventory file saved", silent: true });
     setStatus(synced
       ? `Loaded ${imported.length} inventory products from ${file.name}. Saved for Store ${currentStoreNumber}.`
@@ -1871,6 +2015,7 @@ async function handleSalesFile(file) {
     state.sales.activeSessionId = session.id;
     state.sales.sessions = [session, ...state.sales.sessions.filter(item => item.id !== session.id)].slice(0, 20);
     processSalesRows(parsedSales.rows);
+    await refreshAppData({ silent: true });
     const synced = await saveStateNowToSupabase({ successMessage: "Sales file saved", silent: true });
     setStatus(synced
       ? `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved for Store ${currentStoreNumber}.`
@@ -2173,6 +2318,7 @@ function render() {
   renderInventoryTable();
   renderOrderingTable();
   renderUnmatched();
+  if (!dom.masterProductModal?.hidden) renderMasterProductList();
 }
 
 function renderStoreSelector() {
@@ -2729,6 +2875,7 @@ function saveProductEdit(product) {
   editingProductId = null;
   state.inventory.products = mergeProductsWithCatalog(state.inventory.products, state);
   refreshProcessingFromActiveSales();
+  refreshAppData({ silent: true });
   saveState();
   setStatus(`Updated ${newSku}.`);
   showToast("Product saved.");
@@ -2756,6 +2903,7 @@ function deleteInventoryItem(product) {
   editingProductId = null;
   state.inventory.products = mergeProductsWithCatalog(state.inventory.products, state);
   refreshProcessingFromActiveSales();
+  refreshAppData({ silent: true });
   saveState();
   setStatus(`Deleted ${product.id}.`);
   showToast("Inventory item deleted.");
@@ -2776,61 +2924,240 @@ function restoreDeletedInventoryItems() {
 }
 
 async function addProductToMainList() {
-  await refreshGlobalCustomProducts({ silent: true });
-  const rawSku = prompt("Enter JDE/UPC/SKU for the new product:");
-  if (rawSku === null) return;
-  const sku = normalizeUpc(rawSku);
-  if (!sku) {
-    showToast("Enter a SKU/JDE/UPC before adding a product.");
+  openMasterProductList();
+  showMasterProductForm();
+}
+
+function openMasterProductList() {
+  populateMasterProductCategoryOptions();
+  masterProductEditingSku = null;
+  hideMasterProductForm();
+  renderMasterProductList();
+  dom.masterProductModal.hidden = false;
+  dom.masterProductSearchInput?.focus();
+}
+
+function closeMasterProductList() {
+  dom.masterProductModal.hidden = true;
+  hideMasterProductForm();
+}
+
+function populateMasterProductCategoryOptions() {
+  if (!dom.masterProductCategoryInput || dom.masterProductCategoryInput.options.length) return;
+  for (const category of [...CATEGORY_ORDER, "Other Products"]) {
+    const option = document.createElement("option");
+    option.value = category;
+    option.textContent = category;
+    dom.masterProductCategoryInput.appendChild(option);
+  }
+}
+
+function masterProductsForManagement() {
+  return sortProducts(state.inventory.products || [])
+    .filter(product => productCategoryInfo(product) || product.isCustomProduct || product.category === "Other Products")
+    .map(product => ({
+      ...product,
+      size: product.size || parseProductSize(product.name),
+      unitsPerCase: product.unitsPerCase || parseCaseSize(`${product.pack || ""} ${product.name || ""}`) || "",
+    }));
+}
+
+function renderMasterProductList() {
+  if (!dom.masterProductList) return;
+  const query = normalizeSearchText(dom.masterProductSearchInput?.value || "");
+  const compactQuery = compactSearchText(query);
+  const products = masterProductsForManagement().filter(product => {
+    if (!query) return true;
+    const text = [
+      product.id,
+      product.sourceSku,
+      product.name,
+      product.category,
+      product.size,
+      product.unitsPerCase,
+    ].filter(value => value !== null && value !== undefined).map(value => String(value).toLowerCase()).join(" ");
+    return text.includes(query) || text.replace(/[^a-z0-9]/g, "").includes(compactQuery);
+  });
+  if (!products.length) {
+    dom.masterProductList.innerHTML = `<div class="empty-state">No products match your search.</div>`;
     return;
   }
-  if (skuExistsOnAnotherProduct(sku, "")) {
+  dom.masterProductList.innerHTML = products.map(product => {
+    const sourceSku = normalizeUpc(product.sourceSku || product.id);
+    const caseSize = product.unitsPerCase || unitsPerCaseForProduct(product);
+    return `<article class="master-product-row" data-id="${escapeHtml(product.id)}">
+      <div>
+        <strong>${escapeHtml(product.name)}</strong>
+        <div class="small-muted">SKU ${escapeHtml(product.id)} | ${escapeHtml(product.category || "Other Products")} | ${escapeHtml(product.size || "Size not set")} | Case ${escapeHtml(caseSize || "not set")}</div>
+      </div>
+      <div class="master-product-actions">
+        <button class="icon-action edit-icon" data-action="editMasterProduct" data-source-sku="${escapeHtml(sourceSku)}" title="Edit product" aria-label="Edit product">${actionIcon("edit")}</button>
+        <button class="icon-action danger-icon" data-action="deleteMasterProduct" data-source-sku="${escapeHtml(sourceSku)}" title="Delete product" aria-label="Delete product">${actionIcon("trash")}</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+function showMasterProductForm(product = null) {
+  populateMasterProductCategoryOptions();
+  masterProductEditingSku = product ? normalizeUpc(product.sourceSku || product.id) : null;
+  dom.masterProductForm.hidden = false;
+  dom.masterProductFormTitle.textContent = product ? "Edit Product" : "Add Product";
+  dom.saveMasterProductButton.disabled = false;
+  dom.masterProductSkuInput.value = product?.id || "";
+  dom.masterProductSkuInput.disabled = !!product;
+  dom.masterProductNameInput.value = product?.name || "";
+  dom.masterProductSizeInput.value = product?.size || parseProductSize(product?.name || "") || "";
+  dom.masterProductCaseSizeInput.value = product?.unitsPerCase || "";
+  dom.masterProductCategoryInput.value = product?.category || "Other Products";
+  dom.masterProductNameInput.focus();
+}
+
+function hideMasterProductForm() {
+  masterProductEditingSku = null;
+  if (!dom.masterProductForm) return;
+  dom.masterProductForm.hidden = true;
+  dom.masterProductForm.reset();
+  dom.masterProductSkuInput.disabled = false;
+}
+
+async function handleMasterProductListClick(event) {
+  const button = event.target.closest("button[data-action]");
+  if (!button) return;
+  const sourceSku = normalizeUpc(button.dataset.sourceSku || "");
+  const product = masterProductsForManagement().find(item => normalizeUpc(item.sourceSku || item.id) === sourceSku);
+  if (!product) return;
+  if (button.dataset.action === "editMasterProduct") {
+    showMasterProductForm(product);
+  }
+  if (button.dataset.action === "deleteMasterProduct") {
+    await deleteMasterProduct(product);
+  }
+}
+
+async function saveMasterProductFromForm(event) {
+  event.preventDefault();
+  const isEditing = !!masterProductEditingSku;
+  const sku = isEditing ? masterProductEditingSku : normalizeUpc(dom.masterProductSkuInput.value);
+  const description = cleanText(dom.masterProductNameInput.value);
+  const size = cleanText(dom.masterProductSizeInput.value);
+  const caseSize = dom.masterProductCaseSizeInput.value === "" ? null : parseWholeNumber(dom.masterProductCaseSizeInput.value);
+  const category = normalizeCategoryChoice(dom.masterProductCategoryInput.value);
+  if (!sku) {
+    showToast("SKU is required.");
+    return;
+  }
+  if (!description) {
+    showToast("Product name is required.");
+    return;
+  }
+  if (dom.masterProductCaseSizeInput.value !== "" && !caseSize) {
+    showToast("Case size must be a number.");
+    return;
+  }
+  if (!isEditing && skuExistsOnAnotherProduct(sku, "")) {
     showToast("That SKU already exists. Please use a different SKU.");
     return;
   }
 
-  const rawDescription = prompt("Enter product description:");
-  if (rawDescription === null) return;
-  const description = cleanText(rawDescription);
-  if (!description) {
-    showToast("Enter a product description before adding a product.");
+  dom.saveMasterProductButton.disabled = true;
+  try {
+    if (isEditing) {
+      upsertMasterProductEdit({ sku, description, size, caseSize, category });
+    } else {
+      const orderIndex = globalCustomProducts.filter(product => product.category === category).length;
+      globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, {
+        sku,
+        description,
+        category,
+        size,
+        caseSize,
+        orderIndex,
+        createdAt: new Date().toISOString(),
+      }]);
+      globalDeletedProducts = (globalDeletedProducts || []).filter(item => normalizeUpc(item) !== sku);
+    }
+    await commitMasterProductChanges(isEditing ? "Product updated." : "Product added.");
+    hideMasterProductForm();
+  } catch (error) {
+    console.error("Could not save product:", error);
+    showToast("Could not save product.");
+  } finally {
+    dom.saveMasterProductButton.disabled = false;
+  }
+}
+
+function upsertMasterProductEdit({ sku, description, size, caseSize, category }) {
+  const customIndex = globalCustomProducts.findIndex(product => normalizeUpc(product.sku) === sku);
+  if (customIndex >= 0) {
+    globalCustomProducts[customIndex] = {
+      ...globalCustomProducts[customIndex],
+      description,
+      category,
+      size,
+      caseSize,
+      updatedAt: new Date().toISOString(),
+    };
+    globalCustomProducts = normalizeCustomProducts(globalCustomProducts);
     return;
   }
-
-  const categoryHelp = CATEGORY_ORDER.map((category, index) => `${index + 1}. ${category}`).join("\n");
-  const rawCategory = prompt(`Choose a category for this product:\n${categoryHelp}\n\nLeave blank for Other Products:`);
-  const category = normalizeCategoryChoice(rawCategory);
-  const orderIndex = globalCustomProducts.filter(product => product.category === category).length;
-  const product = {
+  globalProductOverrides[sku] = {
+    ...(globalProductOverrides[sku] || {}),
     sku,
     description,
     category,
-    orderIndex,
-    createdAt: new Date().toISOString(),
+    size,
+    caseSize,
+    updatedAt: new Date().toISOString(),
   };
+}
 
-  globalCustomProducts = normalizeCustomProducts([...globalCustomProducts, product]);
-  state.deletedItems = (state.deletedItems || []).filter(item => normalizeUpc(item) !== sku);
+async function deleteMasterProduct(product) {
+  if (!confirm("Delete product?\n\nThis will remove the product from the master product list. This cannot be undone.")) return;
+  const sourceSku = normalizeUpc(product.sourceSku || product.id);
+  try {
+    globalDeletedProducts = [...new Set([...(globalDeletedProducts || []), sourceSku].map(normalizeUpc).filter(Boolean))];
+    delete globalProductOverrides[sourceSku];
+    await commitMasterProductChanges("Product deleted.");
+  } catch (error) {
+    console.error("Could not delete product:", error);
+    showToast("Could not delete product.");
+  }
+}
+
+async function commitMasterProductChanges(message) {
+  saveLocalGlobalCustomProducts();
+  state.deletedItems = (state.deletedItems || []).filter(item => !globalDeletedProducts.includes(normalizeUpc(item)));
   state.inventory.products = mergeProductsWithCatalog(state.inventory.products, state);
   refreshProcessingFromActiveSales();
-  saveLocalGlobalCustomProducts();
-  saveState();
   render();
-
-  dom.addProductButton.disabled = true;
+  renderMasterProductList();
+  await refreshAppData({ silent: true });
   try {
     await withTimeout(saveGlobalCustomProductsToCloud(), 10000, "Product list save timed out");
     if (selectedSupabaseStoreNumber()) {
-      await saveStateNowToSupabase({ successMessage: "Product added", silent: true });
+      await saveStateNowToSupabase({ successMessage: message, silent: true });
     }
-    setStatus(`${sku} added to the main product list.`);
-    showToast("Product added to the main product list.");
+    setStatus(message);
+    showToast(message);
   } catch (error) {
-    console.error("Add product sync failed:", error);
-    setStatus("Product added on this device. Use Save Progress again when online.", true);
-    showToast("Product added on this device.");
+    console.error("Product list sync failed:", error);
+    setStatus("Product saved on this device. It will refresh when the connection is available.", true);
+    showToast(message);
+  }
+}
+
+async function refreshMasterProductList() {
+  dom.refreshMasterProductsButton.disabled = true;
+  try {
+    await refreshAppData({ silent: true, refreshProducts: true });
+    renderMasterProductList();
+    showToast("Products refreshed.");
+  } catch (error) {
+    console.error("Could not refresh products:", error);
+    showToast("Could not refresh products.");
   } finally {
-    dom.addProductButton.disabled = false;
+    dom.refreshMasterProductsButton.disabled = false;
   }
 }
 
@@ -3112,6 +3439,7 @@ function clearSalesData() {
   state.sales = { sessions: [], activeSessionId: null };
   state.uploads.sales = null;
   state.processing = { matched: [], unmatched: [], deductions: [], recommendations: [] };
+  refreshAppData({ silent: true });
   saveState();
   setStatus("Sales data cleared. Inventory was not changed.");
   showToast("Sales data cleared.");
@@ -3127,6 +3455,7 @@ function clearInventoryCounts() {
     product.lastUpdated = new Date().toISOString();
   }
   recalculateRecommendations();
+  refreshAppData({ silent: true });
   saveState();
   setStatus("Inventory counts cleared.");
   showToast("Inventory count data cleared.");
@@ -3166,7 +3495,7 @@ async function clearStockHistoryForCurrentStore() {
     saveLocalBackup();
     const savedToSupabase = await saveStateNowToSupabase({ successMessage: "Stock history cleared for this store.", silent: true });
     closeInventoryHistory();
-    render();
+    await refreshAppData({ silent: true });
     console.log("History after clear:", state.inventoryHistory);
     if (deleteResult.missingTable && removedLocalRows === 0) {
       setStatus("Stock history is not available for this store. No history was cleared.", true);
@@ -3315,7 +3644,8 @@ function clearAllLocalData() {
 }
 
 async function clearAppCache() {
-  if (!confirm("Clear cached app files and reload? Saved store data will not be deleted.")) return;
+  if (!confirm("Clear app cache and refresh data? Saved store data and settings will not be deleted.")) return;
+  dom.clearAppCacheButton.disabled = true;
   try {
     if ("serviceWorker" in navigator) {
       const registrations = await navigator.serviceWorker.getRegistrations();
@@ -3327,12 +3657,18 @@ async function clearAppCache() {
       const keys = await caches.keys();
       await Promise.all(keys.map(key => caches.delete(key)));
     }
-    setStatus("Cache cleared. Reloading...");
-    showToast("Cache cleared.");
-    location.reload(true);
+    await refreshAppData({ silent: true, refreshProducts: true });
+    if (selectedSupabaseStoreNumber()) {
+      await loadSelectedStoreFromSupabase();
+    }
+    setStatus("App cache cleared and data refreshed.");
+    showToast("App cache cleared and data refreshed.");
   } catch (error) {
     console.error("Cache clear failed:", error);
-    setStatus(`Cache clear failed: ${error?.message || "Unknown error"}`, true);
+    setStatus("Could not refresh app data.", true);
+    showToast("Could not refresh app data.");
+  } finally {
+    dom.clearAppCacheButton.disabled = false;
   }
 }
 
@@ -3621,6 +3957,14 @@ function parseCaseSize(value) {
     if (pattern.test(text)) return size;
   }
   return null;
+}
+
+function parseProductSize(value) {
+  const text = cleanText(value);
+  const match = text.match(/\b(\d+(?:\.\d+)?)\s*(m\s*l|ml|l)\b/i);
+  if (!match) return "";
+  const unit = match[2].replace(/\s+/g, "").toUpperCase();
+  return `${match[1]}${unit === "L" ? "L" : "mL"}`;
 }
 
 function looksLikeCode(value) {
