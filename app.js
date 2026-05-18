@@ -1451,7 +1451,7 @@ function bindEvents() {
     saveState();
   });
   on(dom.sortOrderingBySalesToggle, "change", () => {
-    state.settings.sortOrderingBySales = dom.sortOrderingBySalesToggle.checked;
+    state.settings.sortOrderingBySales = dom.sortOrderingBySalesToggle?.checked === true;
     renderOrderingTable();
     saveState();
   });
@@ -2001,58 +2001,66 @@ function recalculateRecommendations() {
   const salesById = new Map(state.processing.matched.map(item => [item.id, item]));
   state.processing.recommendations = sortProducts(state.inventory.products)
     .filter(product => productCategoryInfo(product))
-    .map((product, originalOrderIndex) => {
-      const sales = salesById.get(product.id);
-      const unitsSold = safeFiniteNumber(sales?.unitsSold, 0);
-      const frontUnits = stockQuantityNumber(product.quantity);
-      const backstockCases = stockQuantityNumber(product.backstock);
-      const caseSize = positiveFiniteNumber(sales?.unitsPerCase)
-        || positiveFiniteNumber(parseCaseSize(`${product.name}`));
-      const needsCaseSize = Number(backstockCases || 0) > 0;
-      const needsReview = frontUnits == null
-        || backstockCases == null
-        || !Number.isFinite(unitsSold)
-        || (needsCaseSize && !caseSize);
-      const totalUnitsOnHand = needsReview
-        ? null
-        : (backstockCases * (caseSize || 0)) + frontUnits;
-      const weeksInfo = orderingWeeksInfo({
-        averageWeeklySales: unitsSold,
-        totalUnitsOnHand,
-        needsReview,
-      });
-      const netUnitsNeeded = weeksInfo.type === "needs-review" ? 0 : Math.max(0, unitsSold - totalUnitsOnHand);
-      const calculatedCases = unitsSold > 0 && caseSize ? Math.ceil(netUnitsNeeded / caseSize) : 0;
-      const overrideCases = product.overrideCases === "" || product.overrideCases == null
-        ? null
-        : Math.max(0, Number(product.overrideCases) || 0);
-      const orderCases = overrideCases ?? calculatedCases;
-      const unitOrder = caseSize ? orderCases * caseSize : 0;
-      return {
-        id: product.id,
-        name: product.name,
-        originalOrderIndex,
-        unitsSold,
-        unitsPerCase: caseSize || null,
-        front: frontUnits ?? 0,
-        backstock: backstockCases ?? 0,
-        totalUnitsOnHand,
-        weeksOfProduct: weeksInfo.value,
-        weeksOfProductLabel: weeksInfo.label,
-        weeksSortPriority: weeksInfo.sortPriority,
-        weeksStatus: weeksInfo.type,
-        orderCases,
-        unitOrder,
-        status: weeksInfo.type === "needs-review"
-          ? "Needs Review"
-          : unitsSold <= 0 || (weeksInfo.value != null && weeksInfo.value >= 2)
-          ? "Do Not Order"
-          : "Order Needed",
-        notes: product.notes || "",
-        overrideCases: product.overrideCases ?? "",
-      };
-    });
+    .map((product, originalOrderIndex) => buildOrderingRecommendation(product, originalOrderIndex, salesById));
   render();
+}
+
+function fallbackOrderingRecommendations() {
+  return sortProducts(state.inventory.products || [])
+    .filter(product => productCategoryInfo(product))
+    .map((product, originalOrderIndex) => buildOrderingRecommendation(product, originalOrderIndex, new Map()));
+}
+
+function buildOrderingRecommendation(product, originalOrderIndex, salesById) {
+  const sales = salesById.get(product.id);
+  const unitsSold = safeFiniteNumber(sales?.unitsSold, 0);
+  const frontUnits = stockQuantityNumber(product.quantity);
+  const backstockCases = stockQuantityNumber(product.backstock);
+  const caseSize = positiveFiniteNumber(sales?.unitsPerCase)
+    || positiveFiniteNumber(parseCaseSize(`${product.name}`));
+  const needsCaseSize = Number(backstockCases || 0) > 0;
+  const needsReview = frontUnits == null
+    || backstockCases == null
+    || !Number.isFinite(unitsSold)
+    || (needsCaseSize && !caseSize);
+  const totalUnitsOnHand = needsReview
+    ? null
+    : (backstockCases * (caseSize || 0)) + frontUnits;
+  const weeksInfo = orderingWeeksInfo({
+    averageWeeklySales: unitsSold,
+    totalUnitsOnHand,
+    needsReview,
+  });
+  const netUnitsNeeded = weeksInfo.type === "needs-review" ? 0 : Math.max(0, unitsSold - totalUnitsOnHand);
+  const calculatedCases = unitsSold > 0 && caseSize ? Math.ceil(netUnitsNeeded / caseSize) : 0;
+  const overrideCases = product.overrideCases === "" || product.overrideCases == null
+    ? null
+    : Math.max(0, Number(product.overrideCases) || 0);
+  const orderCases = overrideCases ?? calculatedCases;
+  const unitOrder = caseSize ? orderCases * caseSize : 0;
+  return {
+    id: product.id,
+    name: product.name,
+    originalOrderIndex,
+    unitsSold,
+    unitsPerCase: caseSize || null,
+    front: frontUnits ?? 0,
+    backstock: backstockCases ?? 0,
+    totalUnitsOnHand,
+    weeksOfProduct: weeksInfo.value,
+    weeksOfProductLabel: weeksInfo.label,
+    weeksSortPriority: weeksInfo.sortPriority,
+    weeksStatus: weeksInfo.type,
+    orderCases,
+    unitOrder,
+    status: weeksInfo.type === "needs-review"
+      ? "Needs Review"
+      : unitsSold <= 0 || (weeksInfo.value != null && weeksInfo.value >= 2)
+      ? "Do Not Order"
+      : "Order Needed",
+    notes: product.notes || "",
+    overrideCases: product.overrideCases ?? "",
+  };
 }
 
 function positiveFiniteNumber(value) {
@@ -2155,7 +2163,9 @@ function render() {
   renderLastSaved();
   dom.targetWeeksInput.value = state.settings.targetWeeks;
   dom.saleOnlyToggle.checked = state.settings.showSaleOnly === true;
-  dom.sortOrderingBySalesToggle.checked = state.settings.sortOrderingBySales === true;
+  if (dom.sortOrderingBySalesToggle) {
+    dom.sortOrderingBySalesToggle.checked = state.settings.sortOrderingBySales === true;
+  }
   dom.inventorySearchInput.value = state.settings.inventorySearch || "";
   dom.clearInventorySearchButton.hidden = !cleanText(state.settings.inventorySearch || "");
   renderInventorySummary();
@@ -2348,7 +2358,11 @@ function inventoryRowHtml(product) {
 function renderOrderingTable() {
   const recommendations = displayedOrderingRecommendations();
   if (!recommendations.length) {
-    dom.orderingTable.innerHTML = `<div class="empty-state">Upload a sales file to calculate order recommendations from the built-in catalog.</div>`;
+    const hasProducts = (state.inventory.products || []).some(product => productCategoryInfo(product));
+    const message = hasProducts
+      ? "No ordering items match the current filters."
+      : "Could not load products.";
+    dom.orderingTable.innerHTML = `<div class="empty-state">${escapeHtml(message)}</div>`;
     dom.applyDeductionButton.disabled = true;
     dom.deductionStatus.textContent = "";
     return;
@@ -2386,38 +2400,42 @@ function renderOrderingTable() {
 }
 
 function displayedOrderingRecommendations() {
+  const sourceRecommendations = (state.processing.recommendations || []).length
+    ? state.processing.recommendations
+    : fallbackOrderingRecommendations();
   const baseRecommendations = state.settings.showSaleOnly
-    ? (state.processing.recommendations || []).filter(item => getProduct(item.id)?.onSale)
-    : state.processing.recommendations || [];
+    ? sourceRecommendations.filter(item => getProduct(item.id)?.onSale)
+    : sourceRecommendations;
   const recommendations = [...baseRecommendations];
+  const defaultOrderById = orderingDefaultOrderMap();
+  const compareDefault = (a, b) => {
+    const aIndex = orderingOriginalIndex(a, defaultOrderById);
+    const bIndex = orderingOriginalIndex(b, defaultOrderById);
+    if (aIndex !== bIndex) return aIndex - bIndex;
+    return cleanText(a?.name || "").localeCompare(cleanText(b?.name || ""));
+  };
   if (state.settings.sortOrderingBySales !== true) {
-    return recommendations.sort(compareOrderingDefaultOrder);
+    return recommendations.sort(compareDefault);
   }
   return recommendations.sort((a, b) => {
     const salesDifference = safeFiniteNumber(b.unitsSold, 0) - safeFiniteNumber(a.unitsSold, 0);
     if (salesDifference !== 0) return salesDifference;
-    return compareOrderingDefaultOrder(a, b);
+    return compareDefault(a, b);
   });
 }
 
-function compareOrderingDefaultOrder(a, b) {
-  if (a?.id === b?.id) return 0;
-  const aIndex = orderingOriginalIndex(a);
-  const bIndex = orderingOriginalIndex(b);
-  if (aIndex !== bIndex) return aIndex - bIndex;
-  const sorted = sortProducts([getProduct(a.id) || a, getProduct(b.id) || b]);
-  if (sorted[0]?.id === a.id) return -1;
-  if (sorted[0]?.id === b.id) return 1;
-  return 0;
+function orderingDefaultOrderMap() {
+  return new Map(
+    sortProducts(state.inventory.products || [])
+      .map((product, index) => [normalizeUpc(product.id), index]),
+  );
 }
 
-function orderingOriginalIndex(item) {
+function orderingOriginalIndex(item, defaultOrderById = orderingDefaultOrderMap()) {
   if (Number.isFinite(Number(item?.originalOrderIndex))) return Number(item.originalOrderIndex);
-  const product = getProduct(item?.id);
-  if (!product) return Number.MAX_SAFE_INTEGER;
-  const sortedProducts = sortProducts(state.inventory.products);
-  const index = sortedProducts.findIndex(row => row.id === product.id);
-  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+  const productId = normalizeUpc(item?.id);
+  const mappedIndex = defaultOrderById.get(productId);
+  return Number.isFinite(mappedIndex) ? mappedIndex : Number.MAX_SAFE_INTEGER;
 }
 
 function orderingRecommendationRow(item) {
