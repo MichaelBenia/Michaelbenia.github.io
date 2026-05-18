@@ -2017,14 +2017,14 @@ async function handleSalesFile(file) {
     processSalesRows(parsedSales.rows);
     await refreshAppData({ silent: true });
     const synced = await saveStateNowToSupabase({ successMessage: "Sales file saved", silent: true });
-    setStatus(synced
-      ? `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved for Store ${currentStoreNumber}.`
-      : `Loaded ${parsedSales.rows.length} sales rows from ${file.name}. Saved on this device; select a store or retry sync to share it.`);
-    showToast("Sales file loaded.");
+    console.log("Sales data loaded:", { rows: parsedSales.rows.length, fileName: file.name, synced });
+    setStatus("Sales data loaded.");
+    showToast("Sales data loaded.");
     activateTab("ordering");
   } catch (error) {
-    setStatus(readableError(error), true);
-    showToast(readableError(error));
+    console.error("Could not load sales data:", error);
+    setStatus("Could not load sales data.", true);
+    showToast("Could not load sales data.");
   } finally {
     dom.salesInput.value = "";
   }

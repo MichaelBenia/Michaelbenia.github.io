@@ -32,9 +32,6 @@
         <label for="storeSelect">Store</label>
         <select id="storeSelect"></select>
         <input id="salesFileInput" type="file" accept=".xlsx,.csv" hidden />
-        <button id="uploadSalesButton" class="primary-button">
-          Upload Sales File
-        </button>
         <button id="addStoreButton" class="secondary-button">Add Store</button>
         <button id="refreshStoresButton" class="secondary-button">Refresh Stores</button>
         <button id="reloadStoreButton" class="secondary-button">Restore Store Data</button>
@@ -91,6 +88,9 @@
             <div id="orderingSummary" class="summary-grid"></div>
           </div>
           <div class="ordering-actions">
+            <button id="uploadSalesButton" class="primary-button">
+              Upload Sales Data
+            </button>
             <button id="applyDeductionButton" class="secondary-button">
               Apply Sales Deduction
             </button>
